@@ -55,4 +55,48 @@ async def parse_with_selector_plan(
 
     if rows:
         return rows, ""
+
+    # Operator-level fallback: line-pair extraction from visible body text.
+    lines = [common.normalize_space(x) for x in body.splitlines() if common.normalize_space(x)]
+    for i, line in enumerate(lines):
+        if not any(x in line.lower() for x in ["£", "ł", "pw", "per week", "pcm", "per month", "monthly"]):
+            continue
+        price = common.parse_price_to_weekly_numeric(line)
+        if price is None:
+            continue
+
+        room = ""
+        for j in range(max(0, i - 3), i):
+            cand = common.clean_room_name(lines[j])
+            if cand:
+                room = cand
+        if not room:
+            continue
+
+        context = " | ".join(lines[max(0, i - 2) : min(len(lines), i + 3)])
+        rows.append(
+            {
+                "Room Name": room,
+                "Contract Length": common.extract_contract_length(context),
+                "Price": price,
+                "Floor Level": common.normalise_floor_level(context),
+                "Academic Year": common.normalise_academic_year(context) or page_ay,
+                "Incentives": common.extract_and_normalise_incentives(context, property_incentives),
+                "Availability": common.infer_availability(context),
+                "Source URL": src["url"],
+            }
+        )
+
+    if rows:
+        # local dedupe
+        out = []
+        seen = set()
+        for r in rows:
+            k = (r["Room Name"], r["Contract Length"], r["Price"], r["Source URL"])
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(r)
+        return out, ""
+
     return [], "no extractable room rows"

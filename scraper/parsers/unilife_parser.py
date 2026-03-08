@@ -18,8 +18,25 @@ def _room_scoped_property_incentives(room_name: str, property_text: str) -> str:
             continue
         if ("twodio" in low or "kitchen & bedding pack" in low) and "twodio" not in room_low:
             continue
+        if "bus pass" in low and "premium plus" not in room_low:
+            continue
         keep.append(t)
     return " | ".join(keep)
+
+
+def _scope_incentives(room_name: str, incentives_text: str) -> str:
+    room_low = common.normalize_space(room_name).lower()
+    if not incentives_text:
+        return ""
+    kept: List[str] = []
+    for token in incentives_text.split(" | "):
+        low = token.lower()
+        if "bus pass" in low and "premium plus" not in room_low:
+            continue
+        if ("kitchen & bedding pack" in low or "twodio" in low) and "twodio" not in room_low:
+            continue
+        kept.append(token)
+    return " | ".join(kept)
 
 
 def _unilife_tile_price(tile_text: str, contract_text: str, modal_text: str):
@@ -93,7 +110,7 @@ async def _parse_open_modal(page: Page, src: Dict[str, str], property_text: str,
             floor = common.normalise_floor_level(tile_text)
             ay = common.normalise_academic_year(tile_text) or modal_ay
             availability = common.infer_availability(tile_text) or modal_avail
-            incentives = common.extract_and_normalise_incentives(tile_text, room_incentives, property_incentives)
+            incentives = _scope_incentives(room_name, common.extract_and_normalise_incentives(tile_text, room_incentives, property_incentives))
 
             rows.append(
                 {
@@ -145,6 +162,40 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, str]], 
         """
     )
 
+    card_meta = await page.evaluate(
+        r"""
+        () => {
+          const out = [];
+          const cards = [...document.querySelectorAll('.room-card, [class*="room-card"], [class*="room"] article, article')];
+          for (const c of cards) {
+            const title = (c.querySelector('h2,h3,h4,.title,[class*="title"]')?.innerText || '').replace(/\s+/g, ' ').trim();
+            const text = (c.innerText || '').replace(/\s+/g, ' ').trim();
+            if (title && text && text.length < 500) out.push({title, text});
+          }
+          return out;
+        }
+        """
+    )
+    room_card_price: Dict[str, float] = {}
+    room_card_incentives: Dict[str, str] = {}
+    for c in card_meta:
+        title = common.clean_room_name(c.get("title", ""))
+        if not title:
+            continue
+        key = common.normalize_key(title)
+        txt = common.normalize_currency_text(c.get("text", ""))
+        p = common.parse_price_to_weekly_numeric(txt)
+        if p is None:
+            m = re.search(r"[£Ł]\s*(\d{2,4}(?:,\d{3})*(?:\.\d{1,2})?)\s*pw", txt, flags=re.IGNORECASE)
+            if m:
+                try:
+                    p = round(float(m.group(1).replace(",", "")), 2)
+                except ValueError:
+                    p = None
+        if p is not None:
+            room_card_price[key] = p
+        room_card_incentives[key] = common.extract_and_normalise_incentives(txt)
+
     rows: List[Dict[str, str]] = []
 
     view_buttons = page.get_by_role("button", name=re.compile(r"view room|book now|book", re.IGNORECASE))
@@ -156,7 +207,16 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, str]], 
                 continue
             await btn.click(timeout=1800)
             await page.wait_for_timeout(600)
-            rows.extend(await _parse_open_modal(page, src, property_text, page_ay))
+            modal_rows = await _parse_open_modal(page, src, property_text, page_ay)
+            for mr in modal_rows:
+                if mr.get("Price") is None:
+                    rk = common.normalize_key(mr.get("Room Name", ""))
+                    if rk in room_card_price:
+                        mr["Price"] = room_card_price[rk]
+                rk = common.normalize_key(mr.get("Room Name", ""))
+                if rk in room_card_incentives:
+                    mr["Incentives"] = common.extract_and_normalise_incentives(mr.get("Incentives", ""), room_card_incentives[rk])
+            rows.extend(modal_rows)
             close = page.get_by_role("button", name=re.compile(r"close|x", re.IGNORECASE))
             if await close.count():
                 try:
@@ -212,7 +272,7 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, str]], 
                             "Price": _unilife_tile_price(tile_text, col.get("header", ""), modal_text) or base_price,
                             "Floor Level": common.normalise_floor_level(tile_text),
                             "Academic Year": common.normalise_academic_year(tile_text) or modal_ay,
-                            "Incentives": common.extract_and_normalise_incentives(tile_text, incentives),
+                        "Incentives": _scope_incentives(room_name, common.extract_and_normalise_incentives(tile_text, incentives)),
                             "Availability": common.infer_availability(tile_text) or modal_avail,
                             "Source URL": src["url"],
                         }
@@ -220,20 +280,45 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, str]], 
                     wrote = True
 
             if not wrote:
+                fallback_price = base_price or room_card_price.get(common.normalize_key(room_name))
                 rows.append(
                     {
                         "Room Name": room_name,
                         "Contract Length": common.extract_contract_length(modal_text),
-                        "Price": base_price,
+                        "Price": fallback_price,
                         "Floor Level": common.normalise_floor_level(modal_text),
                         "Academic Year": modal_ay,
-                        "Incentives": incentives,
+                        "Incentives": _scope_incentives(room_name, common.extract_and_normalise_incentives(incentives, room_card_incentives.get(common.normalize_key(room_name), ""))),
                         "Availability": modal_avail,
                         "Source URL": src["url"],
                     }
                 )
 
     # dedupe inside parser
+    # Fallback for pages where card prices are visible as plain text lines (e.g., Bargate/High Street).
+    if rows:
+        price_tokens = re.findall(r"[£Ł]\s*(\d{2,4}(?:,\d{3})*(?:\.\d{1,2})?)\s*pw", common.normalize_currency_text(page_body), flags=re.IGNORECASE)
+        numeric_prices: List[float] = []
+        for tok in price_tokens:
+            try:
+                val = round(float(tok.replace(",", "")), 2)
+            except ValueError:
+                continue
+            if val not in numeric_prices:
+                numeric_prices.append(val)
+
+        if numeric_prices:
+            ordered_rooms: List[str] = []
+            for r in rows:
+                room = common.normalize_space(r.get("Room Name", ""))
+                if room and room not in ordered_rooms:
+                    ordered_rooms.append(room)
+            if len(numeric_prices) >= len(ordered_rooms) and ordered_rooms:
+                map_price = {ordered_rooms[i]: numeric_prices[i] for i in range(len(ordered_rooms))}
+                for r in rows:
+                    if r.get("Price") is None and r.get("Room Name") in map_price:
+                        r["Price"] = map_price[r["Room Name"]]
+
     uniq = []
     seen = set()
     for r in rows:

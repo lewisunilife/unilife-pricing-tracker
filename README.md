@@ -53,6 +53,7 @@ Stable deterministic room identifier for `Operator + Property + Room Name`.
 - New runs append new rows only.
 - No destructive overwrites of valid historical snapshots.
 - Schema migrations/backfills are allowed for new metadata columns.
+- One-time reset can be run only by explicit instruction; otherwise history must never be wiped.
 
 ## Southampton Master Property List
 

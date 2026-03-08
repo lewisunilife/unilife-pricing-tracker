@@ -210,6 +210,7 @@ def migrate_workbook(path: Path) -> Dict[str, int]:
 
 
 def append_history(path: Path, rows: List[Dict[str, Any]]) -> Tuple[int, int]:
+    # Core rule: append-only history. Existing rows are preserved; only new run rows are appended.
     history = read_history(path)
     run_df = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     merged = pd.concat([history, run_df], ignore_index=True)
