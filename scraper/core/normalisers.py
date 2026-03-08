@@ -201,37 +201,79 @@ def _floor_word(num: int) -> str:
     return FLOOR_WORDS.get(num, "")
 
 
-def normalise_floor_level(value: Any) -> str:
-    text = normalize_space(value).lower()
+def _to_floor_label(raw: str) -> str:
+    text = normalize_space(raw).lower()
     if not text:
         return ""
-
-    if re.search(r"\blower\s+ground|\bground(?:\s*floor)?\b", text):
+    if re.search(r"\blower\s*(?:gr|ground)\b", text):
+        return "Lower Ground"
+    if re.search(r"\bground(?:\s*floor)?\b", text):
         return "Ground"
-
-    range_match = re.search(
-        r"(?:floors?|levels?)\s*(\d+)\s*(?:-|to)\s*(\d+)|(\d+)(?:st|nd|rd|th)?\s*floor\s*(?:-|to)\s*(\d+)(?:st|nd|rd|th)?\s*floor",
-        text,
-    )
-    if range_match:
-        left = range_match.group(1) or range_match.group(3)
-        right = range_match.group(2) or range_match.group(4)
-        if left and right:
-            a = _floor_word(int(left))
-            b = _floor_word(int(right))
-            if a and b:
-                return f"{a} to {b}"
-
-    num_match = re.search(r"(?:level|floor)?\s*(\d+)(?:st|nd|rd|th)?(?:\s*floor)?", text)
+    num_match = re.search(r"(\d+)(?:st|nd|rd|th)?", text)
     if num_match:
         floor = _floor_word(int(num_match.group(1)))
         if floor:
             return floor
-
     for word in ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"):
-        if word in text:
+        if re.search(rf"\b{word}\b", text):
             return word.title()
     return ""
+
+
+def _normalise_single_floor_token(value: str) -> str:
+    raw = normalize_space(value)
+    if not raw:
+        return ""
+    text = raw.lower()
+
+    block_suffix = ""
+    block_match = re.search(r"\((block\s+[a-z0-9]+)\)", raw, flags=re.IGNORECASE)
+    if block_match:
+        block_suffix = f" ({block_match.group(1).title()})"
+        text = normalize_space(re.sub(r"\((block\s+[a-z0-9]+)\)", "", text, flags=re.IGNORECASE))
+
+    range_match = re.search(
+        r"(lower\s*(?:gr|ground)|ground|\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*(?:-|to)\s*"
+        r"(lower\s*(?:gr|ground)|ground|\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)",
+        text,
+    )
+    if range_match:
+        left = _to_floor_label(range_match.group(1))
+        right = _to_floor_label(range_match.group(2))
+        if left and right:
+            return f"{left} to {right}{block_suffix}"
+
+    floor = _to_floor_label(text)
+    if floor:
+        return f"{floor}{block_suffix}"
+    return ""
+
+
+def normalise_floor_level(value: Any) -> str:
+    text = normalize_space(value)
+    if not text:
+        return ""
+
+    # Preserve explicit multi-floor lists from booking flows.
+    if "|" in text:
+        out: List[str] = []
+        for token in text.split("|"):
+            floor = _normalise_single_floor_token(token)
+            if floor and floor.lower() not in [x.lower() for x in out]:
+                out.append(floor)
+        return " | ".join(out)
+
+    # Handle comma-separated floor lists (without converting to a misleading range).
+    if "," in text and re.search(r"\bfloor\b|\bground\b|\blower\b", text, flags=re.IGNORECASE):
+        out: List[str] = []
+        for token in text.split(","):
+            floor = _normalise_single_floor_token(token)
+            if floor and floor.lower() not in [x.lower() for x in out]:
+                out.append(floor)
+        if out:
+            return " | ".join(out)
+
+    return _normalise_single_floor_token(text)
 
 
 def clean_property_name(value: Any) -> str:

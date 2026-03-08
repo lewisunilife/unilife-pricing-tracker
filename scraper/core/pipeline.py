@@ -85,7 +85,6 @@ def build_candidate_row(
     row: Dict[str, Any] = {
         "Snapshot ID": context.snapshot_id,
         "Snapshot Date": context.snapshot_date,
-        "Run Timestamp": context.run_timestamp,
         "City": source.city,
         "Operator": source.operator,
         "HALL ID": "",
@@ -138,7 +137,6 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
     context = SnapshotContext(
         snapshot_id=now.strftime("%Y-%m-%dT%H:%M:%S"),
         snapshot_date=now.date().isoformat(),
-        run_timestamp=now.strftime("%Y-%m-%d %H:%M:%S %Z"),
         scrape_source=scrape_source_label(),
     )
 
@@ -262,7 +260,6 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
         "status": "ok",
         "snapshot_id": context.snapshot_id,
         "snapshot_date": context.snapshot_date,
-        "run_timestamp": context.run_timestamp,
         "cities_attempted": sorted({s.city for s in sources}),
         "operators_attempted": sorted({s.operator for s in sources}),
         "properties_attempted": len({(s.city, s.operator, s.property) for s in sources}),

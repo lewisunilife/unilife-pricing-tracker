@@ -14,22 +14,21 @@ Config-driven PBSA pricing intelligence pipeline with append-only historical ana
 
 1. Snapshot ID
 2. Snapshot Date
-3. Run Timestamp
-4. City
-5. Operator
-6. HALL ID
-7. Property
-8. ROOM ID
-9. Room Name
-10. Floor Level
-11. Contract Length
-12. Academic Year
-13. Price
-14. Contract Value
-15. Incentives
-16. Availability
-17. Source URL
-18. Scrape Source
+3. City
+4. Operator
+5. HALL ID
+6. Property
+7. ROOM ID
+8. Room Name
+9. Floor Level
+10. Contract Length
+11. Academic Year
+12. Price
+13. Contract Value
+14. Incentives
+15. Availability
+16. Source URL
+17. Scrape Source
 
 ## History Rules (Critical)
 

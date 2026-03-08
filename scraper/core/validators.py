@@ -59,7 +59,6 @@ def validate_row(raw: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     row["Scrape Source"] = normalize_space(row.get("Scrape Source", ""))
     row["Snapshot ID"] = normalize_space(row.get("Snapshot ID", ""))
     row["Snapshot Date"] = normalize_space(row.get("Snapshot Date", ""))
-    row["Run Timestamp"] = normalize_space(row.get("Run Timestamp", ""))
     row["HALL ID"] = normalize_space(row.get("HALL ID", ""))
     row["ROOM ID"] = normalize_space(row.get("ROOM ID", ""))
 

@@ -20,7 +20,6 @@ SHEET_NAME = "All Pricing"
 OUTPUT_COLUMNS = [
     "Snapshot ID",
     "Snapshot Date",
-    "Run Timestamp",
     "City",
     "Operator",
     "HALL ID",

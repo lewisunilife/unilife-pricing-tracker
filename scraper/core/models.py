@@ -38,7 +38,6 @@ class SourceAttempt:
 class SnapshotContext:
     snapshot_id: str
     snapshot_date: str
-    run_timestamp: str
     scrape_source: str
 
 
