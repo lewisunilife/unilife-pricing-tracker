@@ -8,8 +8,7 @@ Config-driven PBSA pricing intelligence pipeline with append-only historical ana
 - Uses staged extraction order per URL: API detection -> rendered DOM -> Playwright interaction fallback.
 - Writes a validated analytics table to:
   - `data/Unilife_Pricing_Snapshot.xlsx` (sheet `All Pricing`)
-- Writes auditable snapshot artifacts per run to:
-  - `data/snapshots/<snapshot_id>/`
+- Uses the workbook as the single persistent historical dataset (no persisted per-run snapshot folders).
 
 ## Canonical Analytics Schema (Exact Order)
 
@@ -38,6 +37,7 @@ Config-driven PBSA pricing intelligence pipeline with append-only historical ana
 - Never overwrite valid historical rows.
 - Never delete historical rows.
 - Resets are only allowed via explicit instruction.
+- No per-run raw/validated artifact folders are persisted in the repository.
 
 ## Architecture
 

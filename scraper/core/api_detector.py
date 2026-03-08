@@ -2,6 +2,7 @@ import json
 import re
 from typing import Any, Dict, List, Tuple
 
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 
 from .normalisers import clean_room_name, extract_contract_length, normalise_academic_year, normalise_floor_level, normalise_availability, parse_price_to_weekly_numeric
@@ -49,16 +50,20 @@ def _walk_json(node: Any, out: List[Dict[str, Any]]) -> None:
 
 
 async def detect_candidates(page: Page) -> List[str]:
-    urls = await page.evaluate(
-        r"""
-        () => {
-          const fromPerf = performance.getEntriesByType('resource').map(x => x.name || '');
-          const fromLinks = [...document.querySelectorAll('a[href],script[src],link[href]')]
-            .map(n => n.href || n.src || '');
-          return [...new Set([...fromPerf, ...fromLinks])].filter(Boolean);
-        }
-        """
-    )
+    try:
+        urls = await page.evaluate(
+            r"""
+            () => {
+              const fromPerf = performance.getEntriesByType('resource').map(x => x.name || '');
+              const fromLinks = [...document.querySelectorAll('a[href],script[src],link[href]')]
+                .map(n => n.href || n.src || '');
+              return [...new Set([...fromPerf, ...fromLinks])].filter(Boolean);
+            }
+            """
+        )
+    except PlaywrightError:
+        # Some sites trigger a late redirect/challenge; skip API probing for this URL.
+        return []
     return [url for url in urls if API_HINT_RE.search(url)]
 
 

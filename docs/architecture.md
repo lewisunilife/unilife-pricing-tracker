@@ -15,7 +15,6 @@ The scraper is now a config-driven pipeline with clear separation of concerns:
 - `scraper/core/playwright_helpers.py`: browser navigation/click utilities
 - `scraper/core/coverage.py`: property-level and URL-level coverage tracking
 - `scraper/core/workbook.py`: append-only Excel schema migration + writing
-- `scraper/core/logging.py`: raw/validated snapshot and log file output
 - `scraper/core/pipeline.py`: orchestration of API -> DOM -> Playwright stages
 - `scraper/main.py`: primary entrypoint
 - `scraper/unilife_pricing_snapshot.py`: backward-compatible wrapper entrypoint
@@ -35,16 +34,13 @@ Operator-specific adapters live in `scraper/parsers/`.
 
 Each adapter owns operator-specific selectors/interactions. No single global parser is used as the published extraction path.
 
-## Raw Snapshot Audit
+## Persistence Model
 
-For every run:
+Only one persistent analytics dataset is kept in the repository:
 
-- `data/snapshots/<snapshot_id>/raw/raw_records.jsonl`
-- `data/snapshots/<snapshot_id>/validated/validated_records.jsonl`
-- `data/snapshots/<snapshot_id>/logs/coverage_attempts.json`
-- `data/snapshots/<snapshot_id>/logs/coverage_summary.json`
-- `data/snapshots/<snapshot_id>/logs/failures.json`
-- `data/snapshots/<snapshot_id>/logs/run_summary.json`
+- `data/Unilife_Pricing_Snapshot.xlsx` (sheet `All Pricing`)
+
+No per-run snapshot directories are persisted in version control.
 
 ## History Guarantee
 

@@ -9,7 +9,6 @@ import pandas as pd
 import yaml
 from playwright.async_api import async_playwright
 
-from scraper.core import logging as snapshot_logging
 from scraper.core.api_detector import extract_api_rows
 from scraper.core.coverage import CoverageTracker
 from scraper.core.ids import hall_id, room_id
@@ -141,7 +140,6 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
 
     sources = load_sources(repo_root() / "scraper" / "config", city_filter=city)
     tracker = CoverageTracker()
-    snapshot_dirs = snapshot_logging.snapshot_paths(repo_root(), context.snapshot_id)
     raw_records: List[Dict[str, Any]] = []
     validated_records: List[Dict[str, Any]] = []
 
@@ -231,23 +229,14 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
 
     validated_records = dedupe_within_run(validated_records)
     if not validated_records:
-        snapshot_logging.write_jsonl(snapshot_dirs["raw"] / "raw_records.jsonl", raw_records)
-        snapshot_logging.write_jsonl(snapshot_dirs["validated"] / "validated_records.jsonl", validated_records)
-        snapshot_logging.write_json(snapshot_dirs["logs"] / "coverage_attempts.json", tracker.as_dicts())
-        snapshot_logging.write_json(snapshot_dirs["logs"] / "coverage_summary.json", tracker.property_summary())
-        return {"status": "no_rows", "snapshot_id": context.snapshot_id}
+        return {
+            "status": "no_rows",
+            "snapshot_id": context.snapshot_id,
+            "coverage_summary": tracker.property_summary(),
+        }
 
     prev, appended = append_rows(workbook_path(), validated_records)
-
-    snapshot_logging.write_jsonl(snapshot_dirs["raw"] / "raw_records.jsonl", raw_records)
-    snapshot_logging.write_jsonl(snapshot_dirs["validated"] / "validated_records.jsonl", validated_records)
-    snapshot_logging.write_json(snapshot_dirs["logs"] / "coverage_attempts.json", tracker.as_dicts())
     coverage_summary = tracker.property_summary()
-    snapshot_logging.write_json(snapshot_dirs["logs"] / "coverage_summary.json", coverage_summary)
-    snapshot_logging.write_json(
-        snapshot_dirs["logs"] / "failures.json",
-        [x for x in coverage_summary if x["status"] != "scraped successfully with rows"],
-    )
 
     with_price = sum(1 for r in validated_records if r.get("Price") is not None and not pd.isna(r.get("Price")))
     summary = {
@@ -263,10 +252,10 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
         "rows_without_prices": appended - with_price,
         "historical_total_rows": prev + appended,
         "coverage_summary": coverage_summary,
-        "snapshot_path": str(snapshot_dirs["base"]),
         "workbook_path": str(workbook_path()),
+        "raw_records_count": len(raw_records),
+        "validated_records_count": len(validated_records),
     }
-    snapshot_logging.write_json(snapshot_dirs["logs"] / "run_summary.json", summary)
     return summary
 
 

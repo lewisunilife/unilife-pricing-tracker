@@ -48,7 +48,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/Unilife_Pricing_Snapshot.xlsx data/snapshots
+          git add data/Unilife_Pricing_Snapshot.xlsx
           git commit -m "chore: update PBSA pricing snapshot"
           git push
 
