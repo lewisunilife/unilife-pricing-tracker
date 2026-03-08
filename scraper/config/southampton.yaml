@@ -1,0 +1,139 @@
+city: Southampton
+sources:
+  - operator: Abodus Student Living
+    property: The Walls
+    parser: abodus
+    primary_url: https://abodusstudents.com/student-accommodation/southampton/the-walls/
+    secondary_urls:
+      - https://portal.abodusstudents.com/StarRezPortalX/7549F38A/22/32/Book_Now_-Choose_your_room?UrlToken=4715A6B3&LowerRoomRateValue=0&UpperRoomRateValue=0&TermID=242&RoomLocationID=5&DateStart=08%20March%202026&DateEnd=15%20March%202026
+      - https://portal.abodusstudents.com/StarRezPortalX/EACFF4AC/22/32/Book_Now_-Choose_your_room?UrlToken=4715A6B3&LowerRoomRateValue=0&UpperRoomRateValue=0&TermID=253&RoomLocationID=5&DateStart=05%20September%202026&DateEnd=10%20July%202027
+    notes: Brochure + StarRez booking URLs.
+
+  - operator: Canvas Student
+    property: Capital House
+    parser: canvas
+    primary_url: https://www.canvas-world.com/en/locations/united-kingdom/southampton/capital-house
+    secondary_urls:
+      - https://www.canvas-world.com/en/locations/united-kingdom/southampton/capital-house#rooms
+
+  - operator: Capitol Students
+    property: Hampton Square
+    parser: capitol
+    primary_url: https://www.capitolstudents.com/locations/southampton/southampton-hampton-square/
+    secondary_urls:
+      - https://hamptonportal.capitolstudents.com/southampton/southampton-hampton-square/student/
+
+  - operator: Collegiate
+    property: Park House
+    parser: collegiate
+    primary_url: https://www.collegiate-ac.com/uk/student-accommodation/southampton/park-house/
+    secondary_urls:
+      - https://www.collegiate-ac.com/uk-student-accommodation/southampton/park-house/
+
+  - operator: CRM Students
+    property: The Bank
+    parser: crm
+    primary_url: https://www.crm-students.com/student-accommodation/southampton/the-bank/
+    secondary_urls:
+      - https://www.crm-students.com/southampton/the-bank/rooms
+
+  - operator: Every Student
+    property: Lucia Foster Welch
+    parser: every_student
+    primary_url: https://www.everystudent.co.uk/student-accommodation/southampton/lucia-foster-welch/
+    secondary_urls:
+      - https://everystudent.co.uk/southampton-student-accommodation/
+
+  - operator: Hello Student
+    property: Brunswick Apartments
+    parser: hello_student
+    primary_url: https://www.hellostudent.co.uk/student-accommodation/southampton/brunswick-apartments/
+    secondary_urls: []
+
+  - operator: Hello Student
+    property: London Road Apartments
+    parser: hello_student
+    primary_url: https://www.hellostudent.co.uk/student-accommodation/southampton/london-road/
+    secondary_urls:
+      - https://www.hellostudent.co.uk/book-a-room?property=979
+
+  - operator: Homes for Students
+    property: Southampton
+    parser: homes_for_students
+    primary_url: https://wearehomesforstudents.com/student-accommodation/southampton
+    secondary_urls:
+      - https://wearehomesforstudents.com/student-accommodation/southampton/emily-davies
+      - https://wearehomesforstudents.com/student-accommodation/southampton/green-wood-court
+      - https://wearehomesforstudents.com/student-accommodation/southampton/hamwic-hall
+      - https://wearehomesforstudents.com/student-accommodation/southampton/marland-house
+      - https://wearehomesforstudents.com/student-accommodation/southampton/queens-gate
+      - https://wearehomesforstudents.com/student-accommodation/southampton/the-court-yard
+    notes: City + property pages grouped under one adapter entry.
+
+  - operator: Host Students
+    property: Southampton Crossings
+    parser: host
+    primary_url: https://host-students.com/property/southampton-crossings/
+    secondary_urls: []
+
+  - operator: Mezzino
+    property: Cumberland Place
+    parser: mezzino
+    primary_url: https://www.mezzino.com/property/cumberland-place/
+    secondary_urls: []
+
+  - operator: Now Students
+    property: Portswood House
+    parser: now_students
+    primary_url: https://www.nowstudents.co.uk/student-accommodation/southampton/portswood-house/
+    secondary_urls: []
+
+  - operator: Prestige Student Living
+    property: Stanley Studios
+    parser: prestige
+    primary_url: https://prestigestudentliving.com/student-accommodation/southampton/stanley-studios
+    secondary_urls: []
+
+  - operator: Student Roost
+    property: Vincent Place
+    parser: student_roost
+    primary_url: https://www.studentroost.co.uk/locations/southampton/vincent-place
+    secondary_urls: []
+
+  - operator: Unilife
+    property: Bargate House
+    parser: unilife
+    primary_url: https://unilife.co.uk/property/unilife-bargate-house/
+    secondary_urls: []
+
+  - operator: Unilife
+    property: High Street
+    parser: unilife
+    primary_url: https://unilife.co.uk/property/unilife-high-street/
+    secondary_urls: []
+
+  - operator: Unilife
+    property: Castle Way
+    parser: unilife
+    primary_url: https://unilife.co.uk/property/castle-way/
+    secondary_urls: []
+
+  - operator: Unite Students
+    property: Orion Point
+    parser: unite
+    primary_url: https://www.unitestudents.com/student-accommodation/southampton/orion-point
+    secondary_urls: []
+
+  - operator: Vita Student
+    property: Richmond House
+    parser: vita
+    primary_url: https://www.vitastudent.com/en/cities/southampton/richmond-house/
+    secondary_urls: []
+
+  - operator: Yugo
+    property: Southampton
+    parser: yugo
+    primary_url: https://yugo.com/en-gb/global/united-kingdom/southampton
+    secondary_urls:
+      - https://yugo.com/en-gb/global/united-kingdom/southampton/austen-house
+      - https://yugo.com/en-gb/global/united-kingdom/southampton/crescent-place

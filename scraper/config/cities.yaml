@@ -1,0 +1,3 @@
+cities:
+  - name: Southampton
+    config: southampton.yaml

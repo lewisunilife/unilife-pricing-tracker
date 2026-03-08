@@ -32,7 +32,7 @@ jobs:
         env:
           ENFORCE_LONDON_9AM: "true"
         run: |
-          python scraper/unilife_pricing_snapshot.py
+          python scraper/main.py --city Southampton
 
       - name: Detect file changes
         id: changes
@@ -48,8 +48,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/Unilife_Pricing_Snapshot.xlsx
-          git commit -m "chore: update Unilife pricing snapshot"
+          git add data/Unilife_Pricing_Snapshot.xlsx data/snapshots
+          git commit -m "chore: update PBSA pricing snapshot"
           git push
 
       - name: Log summary

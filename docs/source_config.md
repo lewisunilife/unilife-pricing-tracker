@@ -9,10 +9,20 @@ Keep source management config-driven so new URLs and future cities can be added 
 ## Current Structure
 
 File:
-- `scraper/source_config.py`
+- `scraper/config/cities.yaml`
+- `scraper/config/southampton.yaml`
+- `scraper/source_config.py` (compat loader)
 
-Top-level object:
-- `CITY_SOURCES`
+Top-level registry:
+- `cities.yaml` points to city source files
+- each city file stores operator/property records with:
+  - `city`
+  - `operator`
+  - `property`
+  - `parser`
+  - `primary_url`
+  - `secondary_urls`
+  - `notes`
 
 Entry fields:
 - `operator`
@@ -27,7 +37,7 @@ Current scraper routing types:
 - `generic`: operator-targeted non-Unilife parsing with strict room-title and field separation
 
 Routing implementation:
-- `scraper/unilife_pricing_snapshot.py`
+- `scraper/core/pipeline.py`
 - `scraper/parsers/*_parser.py` (operator-specific parser modules)
 
 ## Southampton Master Property List
@@ -55,8 +65,8 @@ Current operators configured:
 
 ## Adding New URLs Safely
 
-1. Add a source entry to `CITY_SOURCES` under the correct city.
-2. Choose `scraper` type (`unilife` or `generic`) or add a new parser path.
+1. Add a source entry in the relevant city YAML file.
+2. Set `parser` to an adapter key and include primary/secondary URLs.
 3. Run scraper.
 
 Result:

@@ -1,0 +1,1 @@
+from .prestige_student_living_parser import parse

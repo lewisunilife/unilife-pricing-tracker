@@ -1,15 +1,17 @@
 ﻿# Unilife Pricing Tracker
 
-Multi-city student accommodation pricing intelligence tracker with append-only historical snapshots.
+Config-driven PBSA pricing intelligence pipeline with append-only historical analytics output.
 
-## What This Is
+## What It Does
 
-- Architected as an **any-city** system.
-- **Southampton** is the first detailed competitor city implemented.
-- Historical workbook lives at `data/Unilife_Pricing_Snapshot.xlsx` (sheet: `All Pricing`).
-- Cloud runs via GitHub Actions and auto-commits updated workbook rows back to the repo.
+- Runs operator-specific adapters for Southampton PBSA sources.
+- Uses staged extraction order per URL: API detection -> rendered DOM -> Playwright interaction fallback.
+- Writes a validated analytics table to:
+  - `data/Unilife_Pricing_Snapshot.xlsx` (sheet `All Pricing`)
+- Writes auditable snapshot artifacts per run to:
+  - `data/snapshots/<snapshot_id>/`
 
-## Exact Schema (Column Order)
+## Canonical Analytics Schema (Exact Order)
 
 1. Snapshot ID
 2. Snapshot Date
@@ -29,47 +31,41 @@ Multi-city student accommodation pricing intelligence tracker with append-only h
 16. Source URL
 17. Scrape Source
 
-## ID Definitions
-
-### HALL ID
-
-Stable deterministic hall identifier for `Operator + Property`.
-
-### ROOM ID
-
-Stable deterministic room identifier for `Operator + Property + Room Name`.
-
-## Field Rules
-
-- `Room Name`: title-selector based and cleaned; excludes price/CTA/offer text.
-- `Price`: numeric weekly rent only (monthly values are converted with `monthly * 12 / 52`, 2dp).
-- `Floor Level`: normalized canonical labels (`Ground`, `First`, `Second`, or ranges like `Third to Fifth`), only from explicit visible floor text.
-- `Academic Year`: normalized canonical `YYYY/YY` format only.
-- `Incentives`: visible offer text only (booking tile, room-level, or property-level), kept separate from `Room Name` and `Price`.
-
-## Historical Data Rules
+## History Rules (Critical)
 
 - Append-only history.
 - New runs append new rows only.
-- No destructive overwrites of valid historical snapshots.
-- Schema migrations/backfills are allowed for new metadata columns.
-- One-time reset can be run only by explicit instruction; otherwise history must never be wiped.
+- Never overwrite valid historical rows.
+- Never delete historical rows.
+- Resets are only allowed via explicit instruction.
 
-## Southampton Master Property List
+## Architecture
 
-Southampton source URLs are maintained in:
-- `scraper/source_config.py`
-
-Operator-specific parser modules are in:
+- `scraper/config/`
+  - `cities.yaml`
+  - `southampton.yaml`
+- `scraper/core/`
+  - models, IDs, normalisers, validators, API detector, coverage, workbook append logic, pipeline orchestration
 - `scraper/parsers/`
+  - operator adapters (`unilife`, `abodus`, `canvas`, `capitol`, `collegiate`, `crm`, `every_student`, `hello_student`, `homes_for_students`, `host`, `mezzino`, `now_students`, `prestige`, `student_roost`, `unite`, `vita`, `yugo`)
+- `scraper/main.py`
+  - primary entrypoint
+- `scraper/unilife_pricing_snapshot.py`
+  - backward-compatible wrapper entrypoint
 
-## Running Locally
+## Local Run
 
 ```bash
-python scraper/unilife_pricing_snapshot.py
+python scraper/main.py --city Southampton --ignore-9am-gate
 ```
 
-Migration-only mode:
+Compatibility wrapper:
+
+```bash
+python scraper/unilife_pricing_snapshot.py --city Southampton --ignore-9am-gate
+```
+
+Schema migration only:
 
 ```bash
 python scraper/unilife_pricing_snapshot.py --clean-existing
@@ -77,19 +73,17 @@ python scraper/unilife_pricing_snapshot.py --clean-existing
 
 ## GitHub Actions
 
-Workflow:
-- `.github/workflows/unilife_pricing_snapshot.yml`
+Workflow: `.github/workflows/unilife_pricing_snapshot.yml`
 
-Behavior:
 - `workflow_dispatch` supported
-- daily schedule enabled
-- UTC cron + Europe/London 9AM gate in scraper logic
-- installs dependencies and Playwright Chromium
-- appends new snapshot rows
-- commits workbook back when files changed
-- prints coverage audit lines for each configured source (rows, no room data, page unavailable, blocked/failed)
+- daily schedule supported
+- Europe/London 9AM gate enforced in runtime logic
+- Playwright Chromium installation retained
+- workbook commit-back retained
 
-## Internal Docs
+## Docs
 
+- `docs/architecture.md`
 - `docs/schema_and_ids.md`
 - `docs/source_config.md`
+- `docs/validation_rules.md`
