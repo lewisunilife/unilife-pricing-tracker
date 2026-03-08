@@ -28,6 +28,7 @@ Current scraper routing types:
 
 Routing implementation:
 - `scraper/unilife_pricing_snapshot.py`
+- `scraper/parsers/*_parser.py` (operator-specific parser modules)
 
 ## Southampton Master Property List
 

@@ -59,6 +59,9 @@ Stable deterministic room identifier for `Operator + Property + Room Name`.
 Southampton source URLs are maintained in:
 - `scraper/source_config.py`
 
+Operator-specific parser modules are in:
+- `scraper/parsers/`
+
 ## Running Locally
 
 ```bash
