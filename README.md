@@ -25,10 +25,11 @@ Config-driven PBSA pricing intelligence pipeline with append-only historical ana
 11. Contract Length
 12. Academic Year
 13. Price
-14. Incentives
-15. Availability
-16. Source URL
-17. Scrape Source
+14. Contract Value
+15. Incentives
+16. Availability
+17. Source URL
+18. Scrape Source
 
 ## History Rules (Critical)
 
@@ -38,6 +39,15 @@ Config-driven PBSA pricing intelligence pipeline with append-only historical ana
 - Never delete historical rows.
 - Resets are only allowed via explicit instruction.
 - No per-run raw/validated artifact folders are persisted in the repository.
+
+## Booking Flow Depth
+
+- Parsers now follow deeper booking links when available (contract/tenancy/availability flows) rather than relying only on brochure cards.
+- Materially different contract options are emitted as separate rows.
+- Price is weekly numeric only.
+- Contract Value is numeric total rent only when explicitly shown by the source.
+- Availability is standardized to: `Available`, `Sold Out`, `Waitlist`, `Limited Availability`, `Unavailable`, `Unknown`.
+- Missing price rows are internally classified in run summary (e.g. `sold_out`, `hidden_deeper_in_flow`, `parser_selector_failure`, `ambiguous_period`).
 
 ## Architecture
 

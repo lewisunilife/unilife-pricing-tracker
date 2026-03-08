@@ -15,7 +15,7 @@ from scraper.core.ids import hall_id, room_id
 from scraper.core.models import SnapshotContext, SourceRecord
 from scraper.core.normalisers import normalize_space
 from scraper.core.playwright_helpers import safe_goto
-from scraper.core.validators import is_publishable_row, validate_row
+from scraper.core.validators import infer_missing_price_reason, is_publishable_row, validate_row
 from scraper.core.workbook import OUTPUT_COLUMNS, append_rows, dedupe_within_run, migrate_workbook
 from scraper.parsers import get_adapter
 
@@ -79,7 +79,7 @@ def build_candidate_row(
     url: str,
     raw: Dict[str, Any],
     context: SnapshotContext,
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], str]:
     room_name = raw.get("Room Name", "")
     property_name = source.property
     row: Dict[str, Any] = {
@@ -96,19 +96,23 @@ def build_candidate_row(
         "Contract Length": raw.get("Contract Length", ""),
         "Academic Year": raw.get("Academic Year", ""),
         "Price": raw.get("Price", ""),
+        "Contract Value": raw.get("Contract Value", ""),
         "Incentives": raw.get("Incentives", ""),
         "Availability": raw.get("Availability", ""),
         "Source URL": normalize_space(raw.get("Source URL", "")) or url,
         "Scrape Source": context.scrape_source,
     }
-    cleaned, _issues = validate_row(row)
+    cleaned, issues = validate_row(row)
     cleaned["HALL ID"] = hall_id(cleaned["Operator"], cleaned["Property"]) if normalize_space(cleaned["Property"]) else ""
     cleaned["ROOM ID"] = (
         room_id(cleaned["Operator"], cleaned["Property"], cleaned["Room Name"])
         if normalize_space(cleaned["Property"]) and normalize_space(cleaned["Room Name"])
         else ""
     )
-    return cleaned
+    cleaned["__missing_price_reason"] = infer_missing_price_reason(raw, cleaned, issues)
+    if issues:
+        cleaned["__validation_issues"] = "|".join(issues)
+    return cleaned, cleaned["__missing_price_reason"]
 
 
 async def _classify_block_reason(page) -> str:
@@ -145,7 +149,8 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        context_browser = await browser.new_context()
+        page = await context_browser.new_page()
         try:
             for source in sources:
                 adapter = get_adapter(source.parser)
@@ -177,7 +182,8 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
                                     "payload": row,
                                 }
                             )
-                            property_rows.append(build_candidate_row(source, url, row, context))
+                            cleaned_row, _reason = build_candidate_row(source, url, row, context)
+                            property_rows.append(cleaned_row)
                         continue
                     tracker.add(source, url, "api", "API", "failed", api_reason, 0)
 
@@ -196,7 +202,8 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
                                     "payload": row,
                                 }
                             )
-                            property_rows.append(build_candidate_row(source, url, row, context))
+                            cleaned_row, _reason = build_candidate_row(source, url, row, context)
+                            property_rows.append(cleaned_row)
                         continue
                     tracker.add(source, url, "dom", "DOM", "failed", dom_reason or "dom extraction failed", 0)
 
@@ -215,7 +222,8 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
                                     "payload": row,
                                 }
                             )
-                            property_rows.append(build_candidate_row(source, url, row, context))
+                            cleaned_row, _reason = build_candidate_row(source, url, row, context)
+                            property_rows.append(cleaned_row)
                     else:
                         block_reason = await _classify_block_reason(page)
                         status = "blocked" if "anti-bot" in block_reason else "failed"
@@ -225,6 +233,7 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
                 validated_records.extend(property_rows)
         finally:
             await page.close()
+            await context_browser.close()
             await browser.close()
 
     validated_records = dedupe_within_run(validated_records)
@@ -239,6 +248,16 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
     coverage_summary = tracker.property_summary()
 
     with_price = sum(1 for r in validated_records if r.get("Price") is not None and not pd.isna(r.get("Price")))
+    with_contract_value = sum(
+        1 for r in validated_records if r.get("Contract Value") is not None and not pd.isna(r.get("Contract Value"))
+    )
+    missing_price_reasons: Dict[str, int] = {}
+    for row in validated_records:
+        if row.get("Price") is not None and not pd.isna(row.get("Price")):
+            continue
+        reason = normalize_space(row.get("__missing_price_reason", "")).lower() or "not_shown_publicly"
+        missing_price_reasons[reason] = missing_price_reasons.get(reason, 0) + 1
+
     summary = {
         "status": "ok",
         "snapshot_id": context.snapshot_id,
@@ -250,6 +269,9 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
         "rows_appended": appended,
         "rows_with_prices": with_price,
         "rows_without_prices": appended - with_price,
+        "rows_with_contract_value": with_contract_value,
+        "rows_without_contract_value": appended - with_contract_value,
+        "missing_price_reasons": missing_price_reasons,
         "historical_total_rows": prev + appended,
         "coverage_summary": coverage_summary,
         "workbook_path": str(workbook_path()),

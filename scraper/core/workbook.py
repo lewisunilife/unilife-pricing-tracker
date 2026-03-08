@@ -11,6 +11,7 @@ from .normalisers import (
     normalise_availability,
     normalise_floor_level,
     normalize_space,
+    parse_contract_value_numeric,
     parse_price_to_weekly_numeric,
 )
 
@@ -30,6 +31,7 @@ OUTPUT_COLUMNS = [
     "Contract Length",
     "Academic Year",
     "Price",
+    "Contract Value",
     "Incentives",
     "Availability",
     "Source URL",
@@ -43,7 +45,7 @@ def migrate_schema(df: pd.DataFrame) -> pd.DataFrame:
         if col not in work.columns:
             work[col] = pd.NA
 
-    text_cols = [c for c in OUTPUT_COLUMNS if c != "Price"]
+    text_cols = [c for c in OUTPUT_COLUMNS if c not in {"Price", "Contract Value"}]
     for col in text_cols:
         work[col] = work[col].apply(normalize_space)
 
@@ -53,6 +55,7 @@ def migrate_schema(df: pd.DataFrame) -> pd.DataFrame:
     work["Academic Year"] = work["Academic Year"].apply(normalise_academic_year)
     work["Availability"] = work["Availability"].apply(normalise_availability)
     work["Price"] = work["Price"].apply(parse_price_to_weekly_numeric)
+    work["Contract Value"] = work["Contract Value"].apply(parse_contract_value_numeric)
 
     work["HALL ID"] = work.apply(
         lambda r: hall_id(r["Operator"], r["Property"]) if normalize_space(r["Property"]) else "",
@@ -94,7 +97,7 @@ def dedupe_within_run(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         key = []
         for col in OUTPUT_COLUMNS:
             value = row.get(col, "")
-            if col == "Price":
+            if col in {"Price", "Contract Value"}:
                 if value is None or (isinstance(value, float) and pd.isna(value)):
                     key.append("")
                 else:

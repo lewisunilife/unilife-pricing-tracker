@@ -9,6 +9,7 @@ from .normalisers import (
     normalise_availability,
     normalise_floor_level,
     normalize_space,
+    parse_contract_value_numeric,
     parse_price_to_weekly_numeric,
 )
 
@@ -41,6 +42,11 @@ def validate_row(raw: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     if normalize_space(price_before) and row["Price"] is None:
         issues.append("invalid_or_ambiguous_price")
 
+    contract_value_before = row.get("Contract Value", "")
+    row["Contract Value"] = parse_contract_value_numeric(contract_value_before)
+    if normalize_space(contract_value_before) and row["Contract Value"] is None:
+        issues.append("invalid_contract_value")
+
     row["Incentives"] = extract_and_assign_incentives(
         row.get("Room Name", ""),
         row.get("Incentives", ""),
@@ -58,6 +64,35 @@ def validate_row(raw: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     row["ROOM ID"] = normalize_space(row.get("ROOM ID", ""))
 
     return row, issues
+
+
+def infer_missing_price_reason(raw: Dict[str, Any], cleaned: Dict[str, Any], issues: List[str]) -> str:
+    explicit = normalize_space(raw.get("__missing_price_reason", "")).lower()
+    allowed = {
+        "sold_out",
+        "unavailable_no_contract_options",
+        "hidden_deeper_in_flow",
+        "parser_selector_failure",
+        "blocked",
+        "ambiguous_period",
+        "not_shown_publicly",
+    }
+    if explicit in allowed:
+        return explicit
+
+    if cleaned.get("Price") is not None:
+        return ""
+
+    availability = normalize_space(cleaned.get("Availability", "")).lower()
+    if availability == "sold out":
+        return "sold_out"
+    if availability == "unavailable":
+        return "unavailable_no_contract_options"
+    if any(issue == "invalid_or_ambiguous_price" for issue in issues):
+        return "ambiguous_period"
+    if normalize_space(raw.get("Contract Length", "")):
+        return "not_shown_publicly"
+    return "parser_selector_failure"
 
 
 def is_publishable_row(row: Dict[str, Any]) -> bool:

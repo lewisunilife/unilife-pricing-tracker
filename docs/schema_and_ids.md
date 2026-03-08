@@ -17,10 +17,11 @@ Project: [unilife-pricing-tracker](https://github.com/lewisunilife/unilife-prici
 11. Contract Length
 12. Academic Year
 13. Price
-14. Incentives
-15. Availability
-16. Source URL
-17. Scrape Source
+14. Contract Value
+15. Incentives
+16. Availability
+17. Source URL
+18. Scrape Source
 
 ## HALL ID
 
@@ -53,6 +54,14 @@ Rules:
 - Weekly text is parsed to decimal (2dp)
 - Monthly text is converted using `monthly * 12 / 52` (2dp)
 - Ambiguous period leaves `Price` blank
+
+## Contract Value
+
+Stored as numeric total contract rent only when the source explicitly shows a total.
+
+Rules:
+- No inferred calculations from weekly rent x weeks
+- If total rent is not visibly shown, `Contract Value` stays blank
 
 ## Incentives
 

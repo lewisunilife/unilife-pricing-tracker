@@ -1,4 +1,4 @@
-﻿from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from playwright.async_api import Page
 
@@ -11,7 +11,7 @@ async def parse_with_selector_plan(
     title_selectors: List[str],
     scope_selectors: List[str],
     include_non_room_titles: bool = False,
-) -> Tuple[List[Dict[str, str]], str]:
+) -> Tuple[List[Dict[str, Any]], str]:
     await common.click_common(page)
     await page.wait_for_timeout(800)
     body = await page.inner_text("body")
@@ -19,15 +19,16 @@ async def parse_with_selector_plan(
     property_incentives = common.extract_and_normalise_incentives(body)
 
     cards = await common.parse_cards_by_selectors(page, title_selectors, scope_selectors)
-    rows: List[Dict[str, str]] = []
+    rows: List[Dict[str, Any]] = []
+    room_incentive_map: Dict[str, str] = {}
+    link_candidates: List[Dict[str, str]] = []
+
     for card in cards:
         title = common.clean_room_name(card.get("title", ""))
         text = common.normalize_currency_text(card.get("text", ""))
+        booking_url = common.normalize_space(card.get("booking_url", ""))
         if not title:
-            # Fallback: choose first room-like line from card text.
-            parts = [common.normalize_space(x) for x in text.split(" ")]
-            joined = " ".join(parts[:12])
-            title = common.clean_room_name(joined)
+            title = common.clean_room_name(text[:120])
 
         if not title and include_non_room_titles:
             raw = common.normalize_space(card.get("title", ""))
@@ -36,67 +37,146 @@ async def parse_with_selector_plan(
         if not title:
             continue
 
+        card_incentives = common.extract_and_normalise_incentives(text, property_incentives)
+        room_incentive_map[common.normalize_key(title)] = card_incentives
+
         price = common.parse_price_to_weekly_numeric(card.get("price", ""))
         if price is None:
             price = common.parse_price_to_weekly_numeric(text)
 
+        availability = common.normalize_space(card.get("availability", "")) or common.infer_availability(text)
         rows.append(
             {
                 "Room Name": title,
                 "Contract Length": common.extract_contract_length(text),
                 "Price": price,
+                "Contract Value": common.parse_contract_value_numeric(text),
                 "Floor Level": common.normalise_floor_level(text),
                 "Academic Year": common.normalise_academic_year(text) or page_ay,
-                "Incentives": common.extract_and_normalise_incentives(text, property_incentives),
-                "Availability": common.normalize_space(card.get("availability", "")) or common.infer_availability(text),
+                "Incentives": card_incentives,
+                "Availability": availability,
                 "Source URL": src["url"],
+                "__missing_price_reason": common.classify_missing_price_reason(text, availability),
             }
         )
 
-    if rows:
-        return rows, ""
+        if booking_url:
+            link_candidates.append(
+                {
+                    "href": booking_url,
+                    "room_hint": title,
+                    "text": common.normalize_space(card.get("title", "")),
+                }
+            )
 
-    # Operator-level fallback: line-pair extraction from visible body text.
-    lines = [common.normalize_space(x) for x in body.splitlines() if common.normalize_space(x)]
-    for i, line in enumerate(lines):
-        if not any(x in line.lower() for x in ["£", "ł", "pw", "per week", "pcm", "per month", "monthly"]):
+    discovered_links = await common.collect_booking_links(page, title_selectors, scope_selectors, max_links=30)
+    link_candidates.extend(discovered_links)
+    # Dedupe links while preserving first room hint.
+    deduped_links: List[Dict[str, str]] = []
+    seen_links = set()
+    for item in link_candidates:
+        href = common.normalize_space(item.get("href", ""))
+        if not href or href in seen_links:
             continue
-        price = common.parse_price_to_weekly_numeric(line)
-        if price is None:
+        seen_links.add(href)
+        deduped_links.append(item)
+
+    deep_rows: List[Dict[str, Any]] = []
+    deep_attempts = 0
+    deep_success = 0
+    for item in deduped_links[:25]:
+        href = common.normalize_space(item.get("href", ""))
+        if not href:
             continue
-
-        room = ""
-        for j in range(max(0, i - 3), i):
-            cand = common.clean_room_name(lines[j])
-            if cand:
-                room = cand
-        if not room:
-            continue
-
-        context = " | ".join(lines[max(0, i - 2) : min(len(lines), i + 3)])
-        rows.append(
-            {
-                "Room Name": room,
-                "Contract Length": common.extract_contract_length(context),
-                "Price": price,
-                "Floor Level": common.normalise_floor_level(context),
-                "Academic Year": common.normalise_academic_year(context) or page_ay,
-                "Incentives": common.extract_and_normalise_incentives(context, property_incentives),
-                "Availability": common.infer_availability(context),
-                "Source URL": src["url"],
-            }
-        )
-
-    if rows:
-        # local dedupe
-        out = []
-        seen = set()
-        for r in rows:
-            k = (r["Room Name"], r["Contract Length"], r["Price"], r["Source URL"])
-            if k in seen:
+        deep_attempts += 1
+        deep_page = await page.context.new_page()
+        try:
+            ok = await common.safe_goto(deep_page, href, timeout=90000)
+            if not ok:
                 continue
-            seen.add(k)
-            out.append(r)
+            parsed = await common.parse_contract_rows_from_page(
+                deep_page,
+                source_url=href,
+                room_hint=item.get("room_hint", ""),
+                default_incentives=property_incentives,
+            )
+            if not parsed:
+                continue
+            deep_success += 1
+            for row in parsed:
+                row_room = common.normalize_key(row.get("Room Name", ""))
+                if row_room and room_incentive_map.get(row_room):
+                    row["Incentives"] = common.extract_and_normalise_incentives(row.get("Incentives", ""), room_incentive_map[row_room])
+                deep_rows.append(row)
+        finally:
+            await deep_page.close()
+
+    if deep_rows:
+        deep_room_keys = {common.normalize_key(r.get("Room Name", "")) for r in deep_rows if common.normalize_space(r.get("Room Name", ""))}
+        filtered: List[Dict[str, Any]] = []
+        for row in rows:
+            room_key = common.normalize_key(row.get("Room Name", ""))
+            if room_key in deep_room_keys and not common.normalize_space(row.get("Contract Length", "")):
+                continue
+            filtered.append(row)
+        rows = filtered + deep_rows
+
+    if not rows:
+        # Operator-level fallback: line-pair extraction from visible body text.
+        lines = [common.normalize_space(x) for x in body.splitlines() if common.normalize_space(x)]
+        for i, line in enumerate(lines):
+            if not any(x in line.lower() for x in ["\u00a3", "\u0141", "pppw", "pw", "per week", "pcm", "per month", "monthly"]):
+                continue
+            price = common.parse_price_to_weekly_numeric(line)
+            if price is None:
+                continue
+
+            room = ""
+            for j in range(max(0, i - 3), i):
+                cand = common.clean_room_name(lines[j])
+                if cand:
+                    room = cand
+            if not room:
+                continue
+
+            context = " | ".join(lines[max(0, i - 2) : min(len(lines), i + 3)])
+            availability = common.infer_availability(context)
+            rows.append(
+                {
+                    "Room Name": room,
+                    "Contract Length": common.extract_contract_length(context),
+                    "Price": price,
+                    "Contract Value": common.parse_contract_value_numeric(context),
+                    "Floor Level": common.normalise_floor_level(context),
+                    "Academic Year": common.normalise_academic_year(context) or page_ay,
+                    "Incentives": common.extract_and_normalise_incentives(context, property_incentives),
+                    "Availability": availability,
+                    "Source URL": src["url"],
+                    "__missing_price_reason": common.classify_missing_price_reason(context, availability),
+                }
+            )
+
+    if rows:
+        out: List[Dict[str, Any]] = []
+        seen = set()
+        for row in rows:
+            key = (
+                common.normalize_space(row.get("Room Name", "")),
+                common.normalize_space(row.get("Contract Length", "")),
+                common.normalize_space(row.get("Academic Year", "")),
+                row.get("Price"),
+                row.get("Contract Value"),
+                common.normalize_space(row.get("Floor Level", "")),
+                common.normalize_space(row.get("Incentives", "")),
+                common.normalize_space(row.get("Availability", "")),
+                common.normalize_space(row.get("Source URL", "")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(row)
         return out, ""
 
-    return [], "no extractable room rows"
+    if deep_attempts > 0 and deep_success == 0:
+        return [], "hidden_deeper_in_flow"
+    return [], "parser_selector_failure"

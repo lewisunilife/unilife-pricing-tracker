@@ -2,15 +2,27 @@ import re
 from typing import Any, Iterable, List, Optional
 
 
-PRICE_RE = re.compile(r"[£Ł]?\s*\d{2,4}(?:,\d{3})*(?:\.\d{1,2})?")
+CURRENCY_CHARS = r"[\u00A3\u0141]"
+MONEY_WITH_CURRENCY_RE = re.compile(rf"{CURRENCY_CHARS}\s*(\d{{2,5}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)")
+WEEKLY_PRICE_RE = re.compile(
+    rf"{CURRENCY_CHARS}\s*(\d{{2,5}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)\s*(?:pppw|ppw|pw|p/w|per\s*week|weekly|/week)\b",
+    re.IGNORECASE,
+)
+MONTHLY_PRICE_RE = re.compile(
+    rf"{CURRENCY_CHARS}\s*(\d{{2,5}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)\s*(?:pcm|per\s*calendar\s*month|per\s*month|monthly|/month)\b",
+    re.IGNORECASE,
+)
+
 ACADEMIC_RE = re.compile(r"\b(?:AY\s*)?((?:20)?\d{2})\s*[/\-]\s*((?:20)?\d{2})\b", re.IGNORECASE)
 CONTRACT_RE = re.compile(r"\b\d{1,2}\s*(?:weeks?|months?)\b", re.IGNORECASE)
+FLEXIBLE_STAY_RE = re.compile(r"\bflexible\s*stay\b", re.IGNORECASE)
+
 CTA_RE = re.compile(
-    r"\b(view room|book now|join waitlist|reserve a studio|check availability|available|sold out|from)\b",
+    r"\b(view room|book now|join waitlist|reserve a studio|check availability|from|contact us|select room|choose room|apply now)\b",
     re.IGNORECASE,
 )
 INCENTIVE_RE = re.compile(
-    r"(premium plus bookings get free annual bus pass|plus bookings get free annual bus pass|book today\s*(?:&|and)?\s*get\s*a?\s*free\s*kitchen\s*(?:&|and)\s*bedding\s+pack\s+worth\s*[£Ł]?\s*\d+|kitchen\s*(?:&|and)\s*bedding\s+pack\s+worth\s*[£Ł]?\s*\d+|[£Ł]\s*\d+(?:[.,]\d{1,2})?\s*cashback|cashback|free\s+annual\s+bus\s+pass|free\s+bus\s+pass|bedding\s+pack(?:\s+included)?|kitchen\s+pack(?:\s+included)?|voucher|discount)",
+    r"(premium plus bookings get free annual bus pass|plus bookings get free annual bus pass|book today\s*(?:&|and)?\s*get\s*a?\s*free\s*kitchen\s*(?:&|and)\s*bedding\s+pack\s+worth\s*[\u00A3\u0141]?\s*\d+|kitchen\s*(?:&|and)\s*bedding\s+pack\s+worth\s*[\u00A3\u0141]?\s*\d+|[\u00A3\u0141]\s*\d+(?:[.,]\d{1,2})?\s*cashback|cashback|free\s+annual\s+bus\s+pass|free\s+bus\s+pass|free\s+laundry|bedding\s+pack(?:\s+included)?|kitchen\s+pack(?:\s+included)?|voucher|discount|offer)",
     re.IGNORECASE,
 )
 
@@ -40,9 +52,24 @@ def normalize_space(value: Any) -> str:
 
 def normalize_currency(value: Any) -> str:
     text = normalize_space(value)
-    for bad in ("Â£", "Ã‚Â£", "Å", "Ł"):
-        text = text.replace(bad, "£")
+    bad_tokens = [
+        "\u00c2\u00a3",
+        "\u00c3\u00a2\u00c2\u00a3",
+        "\u00c5\u0081",
+        "\u0142",
+        "\u0141",
+    ]
+    for bad in bad_tokens:
+        text = text.replace(bad, "\u00a3")
     return text
+
+
+def _parse_amount(raw: str) -> Optional[float]:
+    cleaned = raw.replace(",", "").strip()
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 
 def parse_price_to_weekly_numeric(value: Any) -> Optional[float]:
@@ -54,30 +81,71 @@ def parse_price_to_weekly_numeric(value: Any) -> Optional[float]:
         except Exception:
             return None
 
-    text = normalize_currency(value).lower()
+    text = normalize_currency(value)
     if not text:
         return None
+    low = text.lower()
 
-    weekly = bool(re.search(r"\b(pw|p/w|per\s*week|weekly|/week)\b", text))
-    monthly = bool(re.search(r"\b(pcm|per\s*month|monthly|/month)\b", text))
-    if weekly and monthly:
-        return None
+    weekly_hit = WEEKLY_PRICE_RE.search(text)
+    if weekly_hit:
+        amount = _parse_amount(weekly_hit.group(1))
+        return round(amount, 2) if amount is not None else None
 
-    m = PRICE_RE.search(text)
-    if not m:
-        return None
-    raw = re.sub(r"[^\d.]", "", m.group(0).replace(",", ""))
-    if not raw:
-        return None
-    try:
-        amount = float(raw)
-    except ValueError:
-        return None
-
-    if weekly:
-        return round(amount, 2)
-    if monthly:
+    monthly_hit = MONTHLY_PRICE_RE.search(text)
+    if monthly_hit:
+        amount = _parse_amount(monthly_hit.group(1))
+        if amount is None:
+            return None
         return round((amount * 12) / 52, 2)
+
+    # If period marker exists but no currency-tied value, treat as ambiguous.
+    has_weekly_marker = bool(re.search(r"\b(pppw|ppw|pw|p/w|per\s*week|weekly|/week)\b", low))
+    has_monthly_marker = bool(re.search(r"\b(pcm|per\s*calendar\s*month|per\s*month|monthly|/month)\b", low))
+    if has_weekly_marker or has_monthly_marker:
+        return None
+
+    # Bare numeric fallback only when the whole value is numeric.
+    bare = re.fullmatch(r"\d{2,5}(?:\.\d{1,2})?", low)
+    if bare:
+        amount = _parse_amount(bare.group(0))
+        return round(amount, 2) if amount is not None else None
+    return None
+
+
+def parse_contract_value_numeric(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return round(float(value), 2)
+        except Exception:
+            return None
+
+    text = normalize_currency(value)
+    if not text:
+        return None
+    low = text.lower()
+    if "total" not in low and "contract value" not in low and "contract rent" not in low:
+        return None
+
+    patterns = [
+        re.compile(
+            rf"(?:rent\s*[:\-]?\s*)?{CURRENCY_CHARS}\s*(\d{{2,7}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)\s*(?:total(?:\s+for\s+the\s+contract)?|for\s+the\s+contract|contract\s+total)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            rf"(?:total(?:\s+rent)?|contract(?:\s+value|\s+total|\s+rent)?)\s*[:\-]?\s*{CURRENCY_CHARS}\s*(\d{{2,7}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)",
+            re.IGNORECASE,
+        ),
+    ]
+
+    for pattern in patterns:
+        hit = pattern.search(text)
+        if not hit:
+            continue
+        amount = _parse_amount(hit.group(1))
+        if amount is not None:
+            return round(amount, 2)
     return None
 
 
@@ -98,7 +166,6 @@ def normalise_academic_year(value: Any) -> str:
         end = f"0{end}"
     if not (start.isdigit() and len(start) == 4 and end.isdigit() and len(end) == 2):
         return ""
-
     start_i = int(start)
     expected = (start_i + 1) % 100
     if int(end) != expected:
@@ -110,22 +177,36 @@ def validate_academic_year(value: Any) -> bool:
     return bool(normalise_academic_year(value))
 
 
+def _floor_word(num: int) -> str:
+    return FLOOR_WORDS.get(num, "")
+
+
 def normalise_floor_level(value: Any) -> str:
     text = normalize_space(value).lower()
     if not text:
         return ""
-    if re.search(r"\blower\s+ground|ground(?:\s*floor)?\b", text):
+
+    if re.search(r"\blower\s+ground|\bground(?:\s*floor)?\b", text):
         return "Ground"
 
-    m_range = re.search(r"(?:floors?|levels?)\s*(\d+)\s*(?:-|to)\s*(\d+)", text)
-    if m_range:
-        a = FLOOR_WORDS.get(int(m_range.group(1)), "")
-        b = FLOOR_WORDS.get(int(m_range.group(2)), "")
-        return f"{a} to {b}" if a and b else ""
+    range_match = re.search(
+        r"(?:floors?|levels?)\s*(\d+)\s*(?:-|to)\s*(\d+)|(\d+)(?:st|nd|rd|th)?\s*floor\s*(?:-|to)\s*(\d+)(?:st|nd|rd|th)?\s*floor",
+        text,
+    )
+    if range_match:
+        left = range_match.group(1) or range_match.group(3)
+        right = range_match.group(2) or range_match.group(4)
+        if left and right:
+            a = _floor_word(int(left))
+            b = _floor_word(int(right))
+            if a and b:
+                return f"{a} to {b}"
 
-    m_num = re.search(r"(?:floor|level)?\s*(\d+)(?:st|nd|rd|th)?(?:\s*floor)?", text)
-    if m_num:
-        return FLOOR_WORDS.get(int(m_num.group(1)), "")
+    num_match = re.search(r"(?:level|floor)?\s*(\d+)(?:st|nd|rd|th)?(?:\s*floor)?", text)
+    if num_match:
+        floor = _floor_word(int(num_match.group(1)))
+        if floor:
+            return floor
 
     for word in ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"):
         if word in text:
@@ -150,12 +231,14 @@ def clean_room_name(value: Any) -> str:
         return ""
     text = CTA_RE.sub(" ", text)
     text = INCENTIVE_RE.sub(" ", text)
-    text = re.sub(r"[£Ł]\s*\d{2,4}(?:[.,]\d{1,2})?\s*(?:pw|p/w|per week|weekly|pcm|monthly)?", " ", text, flags=re.IGNORECASE)
+    text = re.sub(rf"{CURRENCY_CHARS}\s*\d{{2,5}}(?:[.,]\d{{1,2}})?\s*(?:pppw|ppw|pw|p/w|per week|weekly|pcm|monthly)?", " ", text, flags=re.IGNORECASE)
     text = CONTRACT_RE.sub(" ", text)
+    text = re.sub(r"\b\d+\s*sqm\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b\d{1,2}\s*[/-]\s*\d{1,2}\b", " ", text)
     text = normalize_space(text)
     if not text:
         return ""
-    if len(text) > 80:
+    if len(text) > 100:
         return ""
     return text
 
@@ -190,17 +273,28 @@ def extract_and_assign_incentives(
 def normalise_availability(value: Any) -> str:
     text = normalize_space(value).lower()
     if not text:
-        return ""
-    if re.search(r"sold out|fully booked|unavailable", text):
+        return "Unknown"
+    if re.search(r"\b(waitlist|wait\s*list)\b", text):
+        return "Waitlist"
+    if re.search(r"\b(sold out|fully booked|no rooms left|booked out)\b", text):
         return "Sold Out"
-    if re.search(r"available|last few|selling fast", text):
+    if re.search(r"\b(last few|selling fast|limited|limited availability|few remaining)\b", text):
+        return "Limited Availability"
+    if re.search(r"\b(unavailable|no availability|not available)\b", text):
+        return "Unavailable"
+    if re.search(r"\b(available|book now|available from|in stock)\b", text):
         return "Available"
-    return normalize_space(value)
+    return "Unknown"
 
 
 def extract_contract_length(value: Any) -> str:
-    m = CONTRACT_RE.search(normalize_space(value))
-    return normalize_space(m.group(0)).upper() if m else ""
+    text = normalize_space(value)
+    match = CONTRACT_RE.search(text)
+    if match:
+        return normalize_space(match.group(0)).upper()
+    if FLEXIBLE_STAY_RE.search(text):
+        return "FLEXIBLE STAY"
+    return ""
 
 
 def unique_join(values: Iterable[str]) -> str:

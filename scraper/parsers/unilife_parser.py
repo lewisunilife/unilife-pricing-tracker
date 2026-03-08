@@ -117,11 +117,13 @@ async def _parse_open_modal(page: Page, src: Dict[str, str], property_text: str,
                     "Room Name": room_name,
                     "Contract Length": contract or common.extract_contract_length(tile_text),
                     "Price": price,
+                    "Contract Value": common.parse_contract_value_numeric(tile_text),
                     "Floor Level": floor,
                     "Academic Year": ay,
                     "Incentives": incentives,
                     "Availability": availability,
                     "Source URL": src["url"],
+                    "__missing_price_reason": common.classify_missing_price_reason(tile_text, availability) if price is None else "",
                 }
             )
             wrote = True
@@ -132,11 +134,13 @@ async def _parse_open_modal(page: Page, src: Dict[str, str], property_text: str,
                 "Room Name": room_name,
                 "Contract Length": common.extract_contract_length(modal_text),
                 "Price": base_price,
+                "Contract Value": common.parse_contract_value_numeric(modal_text),
                 "Floor Level": common.normalise_floor_level(modal_text),
                 "Academic Year": modal_ay,
                 "Incentives": common.extract_and_normalise_incentives(room_incentives, property_incentives),
                 "Availability": modal_avail,
                 "Source URL": src["url"],
+                "__missing_price_reason": common.classify_missing_price_reason(modal_text, modal_avail) if base_price is None else "",
             }
         )
     return rows
@@ -265,16 +269,20 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, str]], 
                 contract = common.extract_contract_length(col.get("header", ""))
                 for tile in col.get("tiles", []):
                     tile_text = common.normalize_space(tile)
+                    row_price = _unilife_tile_price(tile_text, col.get("header", ""), modal_text) or base_price
+                    row_availability = common.infer_availability(tile_text) or modal_avail
                     rows.append(
                         {
                             "Room Name": room_name,
                             "Contract Length": contract or common.extract_contract_length(tile_text),
-                            "Price": _unilife_tile_price(tile_text, col.get("header", ""), modal_text) or base_price,
+                            "Price": row_price,
+                            "Contract Value": common.parse_contract_value_numeric(tile_text) or common.parse_contract_value_numeric(modal_text),
                             "Floor Level": common.normalise_floor_level(tile_text),
                             "Academic Year": common.normalise_academic_year(tile_text) or modal_ay,
                         "Incentives": _scope_incentives(room_name, common.extract_and_normalise_incentives(tile_text, incentives)),
-                            "Availability": common.infer_availability(tile_text) or modal_avail,
+                            "Availability": row_availability,
                             "Source URL": src["url"],
+                            "__missing_price_reason": common.classify_missing_price_reason(tile_text, row_availability) if row_price is None else "",
                         }
                     )
                     wrote = True
@@ -286,11 +294,13 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, str]], 
                         "Room Name": room_name,
                         "Contract Length": common.extract_contract_length(modal_text),
                         "Price": fallback_price,
+                        "Contract Value": common.parse_contract_value_numeric(modal_text),
                         "Floor Level": common.normalise_floor_level(modal_text),
                         "Academic Year": modal_ay,
                         "Incentives": _scope_incentives(room_name, common.extract_and_normalise_incentives(incentives, room_card_incentives.get(common.normalize_key(room_name), ""))),
                         "Availability": modal_avail,
                         "Source URL": src["url"],
+                        "__missing_price_reason": common.classify_missing_price_reason(modal_text, modal_avail) if fallback_price is None else "",
                     }
                 )
 

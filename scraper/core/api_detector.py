@@ -5,7 +5,15 @@ from typing import Any, Dict, List, Tuple
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Page
 
-from .normalisers import clean_room_name, extract_contract_length, normalise_academic_year, normalise_floor_level, normalise_availability, parse_price_to_weekly_numeric
+from .normalisers import (
+    clean_room_name,
+    extract_contract_length,
+    normalise_academic_year,
+    normalise_availability,
+    normalise_floor_level,
+    parse_contract_value_numeric,
+    parse_price_to_weekly_numeric,
+)
 
 
 API_HINT_RE = re.compile(r"(api|graphql|json|starrez|availability|rooms)", re.IGNORECASE)
@@ -35,6 +43,7 @@ def _walk_json(node: Any, out: List[Dict[str, Any]]) -> None:
                     "Room Name": room_name,
                     "Contract Length": extract_contract_length(text),
                     "Price": price,
+                    "Contract Value": parse_contract_value_numeric(text),
                     "Floor Level": normalise_floor_level(text),
                     "Academic Year": normalise_academic_year(text),
                     "Incentives": "",
