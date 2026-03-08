@@ -37,12 +37,22 @@ Rules:
 ## Floor Level
 
 Populated only from explicit floor text visible on source pages/modals/tiles.
+Standardized to canonical labels (e.g. `Ground`, `First`, `Second`, or `First to Third`).
 No inferred values.
 
 ## Academic Year
 
-Populated only from explicit year text (e.g. `2026/27`).
+Populated only from explicit year text and normalized to `YYYY/YY` (e.g. `2026/27`).
 No inferred values.
+
+## Price
+
+Stored as numeric weekly value only.
+
+Rules:
+- Weekly text is parsed to decimal (2dp)
+- Monthly text is converted using `monthly * 12 / 52` (2dp)
+- Ambiguous period leaves `Price` blank
 
 ## Incentives
 

@@ -61,6 +61,7 @@ Current operators configured:
 Result:
 - new snapshots append new rows
 - existing historical rows remain untouched
+- run summary includes a coverage audit entry for every configured source
 
 ## Future City Expansion
 

@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import asyncio
 import datetime as dt
 import hashlib
@@ -39,15 +39,18 @@ OUTPUT_COLUMNS = [
     "Scrape Source",
 ]
 
-PRICE_RE = re.compile(r"(?:£|Ł)?\s*\d{2,4}(?:[.,]\d{1,2})?\s*(?:pw|p/w|/\s*week|per\s*week|weekly)", re.IGNORECASE)
+PRICE_RE = re.compile(r"(?:£)?\s*\d{2,4}(?:,\d{3})*(?:\.\d{1,2})?")
 CONTRACT_RE = re.compile(r"\b\d{1,2}\s*(?:weeks?|months?)\b", re.IGNORECASE)
 FLOOR_RE = re.compile(
-    r"\b(Ground Floor|Lower Ground|Upper Ground|Basement|Level\s*\d+|Floors?\s*\d+\s*-\s*\d+|Floor\s*\d+|\d+(?:st|nd|rd|th)\s*Floor|First Floor|Second Floor|Third Floor|Fourth Floor|Fifth Floor)\b",
+    r"\b(Ground(?:\s*Floor)?|Lower Ground|Upper Ground|Basement|Level\s*\d+|Floors?\s*\d+\s*-\s*\d+|Floor\s*\d+|\d+(?:st|nd|rd|th)\s*Floor|First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth(?:\s*Floor)?)\b",
     re.IGNORECASE,
 )
-ACADEMIC_YEAR_RE = re.compile(r"\b(20\d{2}\s*[/\-]\s*(?:20)?\d{2})\b")
+ACADEMIC_YEAR_RE = re.compile(
+    r"\b(?:AY\s*)?((?:20)?\d{2})\s*[/\-]\s*((?:20)?\d{2})\b",
+    re.IGNORECASE,
+)
 INCENTIVE_RE = re.compile(
-    r"(£\s*\d+(?:[.,]\d{1,2})?\s*cashback|cashback|free\s+annual\s+bus\s+pass|free\s+bus\s+pass|bedding\s+pack(?:\s+included)?|kitchen\s+pack(?:\s+included|(?:\s+worth\s+£?\d+)?)?|voucher|discount)",
+    r"(plus\s+bookings\s+get\s+free\s+annual\s+bus\s+pass|book\s+today\s*(?:&|and)?\s*get\s+a?\s*free\s+kitchen\s*(?:&|and)\s*bedding\s+pack\s+worth\s*[£Ł]?\s*\d+|kitchen\s*(?:&|and)\s*bedding\s+pack\s+worth\s*[£Ł]?\s*\d+|£\s*\d+(?:[.,]\d{1,2})?\s*cashback|cashback|free\s+annual\s+bus\s+pass|free\s+bus\s+pass|bedding\s+pack(?:\s+included)?|kitchen\s+pack(?:\s+included|(?:\s+worth\s+£?\s*\d+)?)?|voucher)",
     re.IGNORECASE,
 )
 
@@ -76,7 +79,10 @@ def normalize_key(text: str) -> str:
 
 
 def normalize_currency(text: str) -> str:
-    return normalize_space(text).replace("Ł", "£").replace("Â£", "£")
+    value = normalize_space(text)
+    for bad in ("Â£", "Ã‚Â£", "Å", "Ł"):
+        value = value.replace(bad, "£")
+    return value
 
 
 def stable_hall_id(operator: str, property_name: str) -> str:
@@ -109,15 +115,38 @@ def clean_room_name(raw: str) -> str:
     return text
 
 
-def extract_price(text: str) -> str:
-    t = normalize_currency(text)
+def parse_price_to_weekly_numeric(text: Any) -> Optional[float]:
+    if text is None:
+        return None
+    if isinstance(text, (int, float)) and not pd.isna(text):
+        return round(float(text), 2)
+
+    t = normalize_currency(text).lower()
+    if not t:
+        return None
+
+    period_weekly = bool(re.search(r"\b(pw|p/w|per\s*week|weekly|/week)\b", t))
+    period_monthly = bool(re.search(r"\b(pcm|per\s*month|monthly|/month)\b", t))
+    if period_weekly and period_monthly:
+        return None
+
     m = PRICE_RE.search(t)
     if not m:
-        return ""
-    val = normalize_space(m.group(0))
-    if "£" not in val:
-        val = f"£{val}"
-    return val
+        return None
+    raw = m.group(0).replace("£", "").replace(",", "").strip()
+    raw = re.sub(r"[^\d.]", "", raw)
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+
+    if period_weekly:
+        return round(value, 2)
+    if period_monthly:
+        return round((value * 12) / 52, 2)
+    return None
 
 
 def extract_contract(text: str) -> str:
@@ -125,26 +154,115 @@ def extract_contract(text: str) -> str:
     return m.group(0).upper() if m else ""
 
 
-def extract_floor(text: str) -> str:
-    m = FLOOR_RE.search(normalize_space(text))
-    return normalize_space(m.group(1)) if m else ""
+def _num_to_floor_word(num: int) -> str:
+    words = {
+        0: "Ground",
+        1: "First",
+        2: "Second",
+        3: "Third",
+        4: "Fourth",
+        5: "Fifth",
+        6: "Sixth",
+        7: "Seventh",
+        8: "Eighth",
+        9: "Ninth",
+        10: "Tenth",
+    }
+    return words.get(num, "")
 
 
-def extract_academic_year(text: str) -> str:
+def normalise_floor_level(text: str) -> str:
+    t = normalize_space(text)
+    if not t:
+        return ""
+
+    # ranges like "Floors 3-5"
+    rng = re.search(r"\b(?:floors?|levels?)\s*(\d+)\s*(?:-|to)\s*(\d+)\b", t, re.IGNORECASE)
+    if rng:
+        a, b = int(rng.group(1)), int(rng.group(2))
+        wa, wb = _num_to_floor_word(a), _num_to_floor_word(b)
+        return f"{wa} to {wb}" if wa and wb else ""
+
+    # ordinals and simple floor references
+    if re.search(r"\b(?:lower\s+)?ground(?:\s*floor)?\b", t, re.IGNORECASE):
+        return "Ground"
+    m_range_words = re.search(
+        r"\b(ground|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*(?:to|-)\s*(ground|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b",
+        t,
+        re.IGNORECASE,
+    )
+    if m_range_words:
+        return f"{m_range_words.group(1).title()} to {m_range_words.group(2).title()}"
+
+    m_num = re.search(r"\b(?:floor|level)?\s*(\d+)(?:st|nd|rd|th)?(?:\s*floor)?\b", t, re.IGNORECASE)
+    if m_num:
+        word = _num_to_floor_word(int(m_num.group(1)))
+        if word:
+            return word
+
+    m_word = re.search(
+        r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*floor\b",
+        t,
+        re.IGNORECASE,
+    )
+    if m_word:
+        return m_word.group(1).title()
+
+    m = FLOOR_RE.search(t)
+    if not m:
+        return ""
+    token = normalize_space(m.group(1)).replace(" Floor", "")
+    return token.title()
+
+
+def normalise_academic_year(text: str) -> str:
     m = ACADEMIC_YEAR_RE.search(normalize_space(text))
     if not m:
         return ""
-    return normalize_space(m.group(1)).replace("-", "/")
+    a = normalize_space(m.group(1))
+    b = normalize_space(m.group(2))
+    if len(a) == 2:
+        a = f"20{a}"
+    if len(b) == 4:
+        b = b[2:]
+    if len(b) == 1:
+        b = f"0{b}"
+    if len(b) == 2 and len(a) == 4 and a.isdigit() and b.isdigit():
+        return f"{a}/{b}"
+    return ""
 
 
-def extract_incentives(*texts: str) -> str:
+def extract_and_normalise_incentives(*texts: str) -> str:
     joined = " ".join(normalize_currency(t) for t in texts if normalize_space(t))
     found = []
     for m in INCENTIVE_RE.finditer(joined):
-        token = normalize_space(m.group(0))
+        token = normalize_currency(m.group(0))
         if token and token.lower() not in [x.lower() for x in found]:
             found.append(token)
-    return " | ".join(found)
+    # Drop shorter duplicates when a longer phrase already contains them.
+    out: List[str] = []
+    for token in found:
+        low = token.lower()
+        if any(low in existing.lower() and low != existing.lower() for existing in found):
+            continue
+        out.append(token)
+    return " | ".join(out)
+
+
+def extract_price(text: Any) -> Optional[float]:
+    return parse_price_to_weekly_numeric(text)
+
+
+def extract_floor(text: str) -> str:
+    return normalise_floor_level(text)
+
+
+def extract_academic_year(text: str) -> str:
+    return normalise_academic_year(text)
+
+
+def extract_incentives(*texts: str) -> str:
+    return extract_and_normalise_incentives(*texts)
 
 
 def repo_root() -> Path:
@@ -203,19 +321,18 @@ def migrate_schema(df: pd.DataFrame) -> pd.DataFrame:
     work = df.copy()
     for col in OUTPUT_COLUMNS:
         if col not in work.columns:
-            work[col] = ""
-    for col in OUTPUT_COLUMNS:
-        work[col] = work[col].fillna("").astype(str)
+            work[col] = pd.NA
+    text_cols = [c for c in OUTPUT_COLUMNS if c != "Price"]
+    for col in text_cols:
+        work[col] = work[col].apply(normalize_space)
     work = work.replace(to_replace=r"^\s*nan\s*$", value="", regex=True)
 
     work["Snapshot Date"] = work["Snapshot Date"].str.replace(" 00:00:00", "", regex=False)
-    work["Run Timestamp"] = work["Run Timestamp"].apply(normalize_space)
-    work["City"] = work["City"].apply(normalize_space)
-    work["Operator"] = work["Operator"].apply(normalize_space)
-    work["Property"] = work["Property"].apply(normalize_space)
     work["Room Name"] = work["Room Name"].apply(clean_room_name)
-    work["Price"] = work["Price"].apply(normalize_currency)
-    work["Incentives"] = work["Incentives"].apply(normalize_space)
+    work["Floor Level"] = work["Floor Level"].apply(normalise_floor_level)
+    work["Academic Year"] = work["Academic Year"].apply(normalise_academic_year)
+    work["Incentives"] = work["Incentives"].apply(extract_and_normalise_incentives)
+    work["Price"] = work["Price"].apply(parse_price_to_weekly_numeric)
 
     missing_city = work["City"].str.lower().isin(["", "unknown"])
     work.loc[missing_city, "City"] = work.loc[missing_city, "Source URL"].apply(infer_city)
@@ -239,18 +356,18 @@ def migrate_schema(df: pd.DataFrame) -> pd.DataFrame:
     floor_missing = work["Floor Level"].apply(normalize_space) == ""
     work.loc[floor_missing, "Floor Level"] = (
         work.loc[floor_missing, "Room Name"] + " " + work.loc[floor_missing, "Contract Length"]
-    ).apply(extract_floor)
+    ).apply(normalise_floor_level)
 
     ay_missing = work["Academic Year"].apply(normalize_space) == ""
     work.loc[ay_missing, "Academic Year"] = (
         work.loc[ay_missing, "Room Name"] + " " + work.loc[ay_missing, "Contract Length"] + " " + work.loc[ay_missing, "Source URL"]
-    ).apply(extract_academic_year)
+    ).apply(normalise_academic_year)
 
     inc_missing = work["Incentives"].apply(normalize_space) == ""
     # Only backfill incentives from existing room/contract text when explicit keywords exist.
     work.loc[inc_missing, "Incentives"] = (
         work.loc[inc_missing, "Room Name"] + " " + work.loc[inc_missing, "Contract Length"]
-    ).apply(lambda x: extract_incentives(x))
+    ).apply(lambda x: extract_and_normalise_incentives(x))
 
     source_missing = work["Scrape Source"].apply(normalize_space) == ""
     work.loc[source_missing, "Scrape Source"] = "Local"
@@ -320,12 +437,12 @@ def make_row(
     floor_level: str,
     contract_length: str,
     academic_year: str,
-    price: str,
+    price: Any,
     incentives: str,
     availability: str,
     source_url: str,
     scrape_source: str,
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     prop = normalize_space(property_name)
     room = clean_room_name(room_name)
     hall_id = stable_hall_id(operator, prop) if prop else ""
@@ -340,11 +457,11 @@ def make_row(
         "Property": prop,
         "ROOM ID": room_id,
         "Room Name": room,
-        "Floor Level": normalize_space(floor_level),
+        "Floor Level": normalise_floor_level(floor_level),
         "Contract Length": normalize_space(contract_length),
-        "Academic Year": normalize_space(academic_year),
-        "Price": normalize_currency(price),
-        "Incentives": normalize_space(incentives),
+        "Academic Year": normalise_academic_year(academic_year),
+        "Price": parse_price_to_weekly_numeric(price),
+        "Incentives": extract_and_normalise_incentives(incentives),
         "Availability": normalize_space(availability),
         "Source URL": source_url,
         "Scrape Source": scrape_source,
@@ -372,6 +489,37 @@ async def scrape_unilife_source(
             property_name = normalize_space(await page.locator("h1").first.inner_text()).replace("\n", " ")
         page_text = await page.inner_text("body")
         page_ay = extract_academic_year(page_text)
+        promo_texts = await page.evaluate(
+            r"""
+            () => {
+              const selectors = ['.banner', '.promo', '.offer', '.announcement', '.hero', '[class*="promo"]', '[class*="offer"]', '[class*="banner"]'];
+              const out = [];
+              selectors.forEach(s => document.querySelectorAll(s).forEach(n => {
+                const t = (n.innerText || '').replace(/\s+/g, ' ').trim();
+                if (t && t.length < 260) out.push(t);
+              }));
+              return out.slice(0, 120);
+            }
+            """
+        )
+        property_incentives = extract_incentives(page_text, " ".join(promo_texts))
+        card_meta = await page.evaluate(
+            r"""
+            () => {
+              const out = [];
+              const cards = [...document.querySelectorAll('[class*="room"], .room, .room-card, article')];
+              for (const c of cards) {
+                const title = (c.querySelector('h2,h3,h4,.title,[class*="title"]')?.innerText || '').replace(/\s+/g, ' ').trim();
+                const text = (c.innerText || '').replace(/\s+/g, ' ').trim();
+                if (title && text) out.push({title, text});
+              }
+              return out.slice(0, 400);
+            }
+            """
+        )
+        room_card_incentives: Dict[str, str] = {}
+        for c in card_meta:
+            room_card_incentives[normalize_key(c.get("title", ""))] = extract_incentives(c.get("text", ""))
 
         blocks = await page.evaluate(
             r"""
@@ -408,6 +556,7 @@ async def scrape_unilife_source(
             modal_ay = extract_academic_year(modal_text) or page_ay
             modal_incentives = extract_incentives(modal_text)
             base_price = extract_price(modal_text)
+            room_level_incentives = room_card_incentives.get(normalize_key(room_name), "")
 
             columns = block.get("columns", [])
             wrote_tile = False
@@ -421,7 +570,7 @@ async def scrape_unilife_source(
                     contract = extract_contract(col_header) or extract_contract(tile_text)
                     floor = extract_floor(tile_text) or extract_floor(modal_text)
                     ay = extract_academic_year(tile_text) or modal_ay
-                    incentives = extract_incentives(tile_text, col_incentives, modal_incentives)
+                    incentives = extract_incentives(tile_text, col_incentives, room_level_incentives, modal_incentives, property_incentives)
                     availability = "Sold Out" if re.search(r"sold out|fully booked", tile_text, re.I) else modal_avail
 
                     rows.append(
@@ -459,7 +608,7 @@ async def scrape_unilife_source(
                         extract_contract(modal_text),
                         modal_ay,
                         base_price,
-                        modal_incentives,
+                        extract_incentives(room_level_incentives, modal_incentives, property_incentives),
                         modal_avail,
                         src["url"],
                         scrape_source,
@@ -507,7 +656,7 @@ async def scrape_non_unilife_source(
         if op == "Student Roost":
             compact = " ".join(lines)
             for room, amt in re.findall(
-                r"(En-suite Rooms|Studio Rooms)\s+from\s+(?:£|Ł)?\s*(\d{2,4}(?:[.,]\d{1,2})?)\s+per\s+week",
+                r"(En-suite Rooms|Studio Rooms)\s+from\s+(?:£)?\s*(\d{2,4}(?:[.,]\d{1,2})?)\s+per\s+week",
                 compact,
                 flags=re.IGNORECASE,
             ):
@@ -638,11 +787,21 @@ async def scrape_non_unilife_source(
         await page.close()
 
 
-def dedupe_current_run(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
+def dedupe_current_run(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen = set()
     out = []
     for row in rows:
-        key = tuple(row.get(col, "") for col in OUTPUT_COLUMNS)
+        key_parts = []
+        for col in OUTPUT_COLUMNS:
+            value = row.get(col, "")
+            if col == "Price":
+                if value is None or (isinstance(value, float) and pd.isna(value)):
+                    key_parts.append("")
+                else:
+                    key_parts.append(f"{float(value):.2f}")
+            else:
+                key_parts.append(normalize_space(value))
+        key = tuple(key_parts)
         if key in seen:
             continue
         seen.add(key)
@@ -664,8 +823,9 @@ async def run_scrape() -> int:
     source_label = scrape_source_label()
 
     sources = [{**s, "city": city} for city, entries in CITY_SOURCES.items() for s in entries]
-    all_rows: List[Dict[str, str]] = []
+    all_rows: List[Dict[str, Any]] = []
     failed: List[str] = []
+    coverage: List[Dict[str, str]] = []
     cities, operators, properties = set(), set(), set()
 
     async with async_playwright() as p:
@@ -679,13 +839,46 @@ async def run_scrape() -> int:
                     rows, err = await scrape_non_unilife_source(browser, src, snapshot_id, snapshot_date, run_timestamp, source_label)
                 if err:
                     failed.append(err)
+                    low = err.lower()
+                    status = "blocked/failed"
+                    if "load failed" in low:
+                        status = "page unavailable"
+                    elif any(x in low for x in ["captcha", "forbidden", "access denied", "403", "401"]):
+                        status = "blocked"
+                    coverage.append(
+                        {
+                            "city": src["city"],
+                            "operator": src["operator"],
+                            "property": src["property"],
+                            "status": status,
+                            "reason": err,
+                        }
+                    )
                     print(f"[WARN] {err}")
                 elif not rows:
                     msg = f"{src['operator']} | {src['property']} (no extractable room rows)"
                     failed.append(msg)
+                    coverage.append(
+                        {
+                            "city": src["city"],
+                            "operator": src["operator"],
+                            "property": src["property"],
+                            "status": "selector mismatch/no room data",
+                            "reason": "scraped but no extractable room rows",
+                        }
+                    )
                     print(f"[WARN] {msg}")
                 else:
                     print(f"[OK] collected {len(rows)} rows")
+                    coverage.append(
+                        {
+                            "city": src["city"],
+                            "operator": src["operator"],
+                            "property": src["property"],
+                            "status": "scraped successfully with rows",
+                            "reason": str(len(rows)),
+                        }
+                    )
                     all_rows.extend(rows)
         finally:
             await browser.close()
@@ -702,7 +895,7 @@ async def run_scrape() -> int:
         if normalize_space(r["Property"]):
             properties.add(r["Property"])
 
-    with_price = sum(1 for r in all_rows if normalize_space(r["Price"]))
+    with_price = sum(1 for r in all_rows if r.get("Price") is not None and not (isinstance(r.get("Price"), float) and pd.isna(r.get("Price"))))
     with_floor = sum(1 for r in all_rows if normalize_space(r["Floor Level"]))
     with_ay = sum(1 for r in all_rows if normalize_space(r["Academic Year"]))
     with_inc = sum(1 for r in all_rows if normalize_space(r["Incentives"]))
@@ -723,6 +916,9 @@ async def run_scrape() -> int:
     print(f"Blocked/failed sites: {len(failed)}")
     for f in failed[:40]:
         print(f" - {f}")
+    print("Coverage audit:")
+    for c in coverage:
+        print(f" - {c['city']} | {c['operator']} | {c['property']} => {c['status']} ({c['reason']})")
     print(f"Workbook path: {workbook_path()}")
     print(f"Historical total rows: {prev + appended}")
     return 0
@@ -747,3 +943,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

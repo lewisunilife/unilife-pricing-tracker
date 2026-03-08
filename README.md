@@ -42,9 +42,10 @@ Stable deterministic room identifier for `Operator + Property + Room Name`.
 ## Field Rules
 
 - `Room Name`: title-selector based and cleaned; excludes price/CTA/offer text.
-- `Floor Level`: populated only from explicit visible floor text.
-- `Academic Year`: populated only from explicit visible year text.
-- `Incentives`: visible offer text only (cashback, bus pass, bedding pack, vouchers, discounts, etc.).
+- `Price`: numeric weekly rent only (monthly values are converted with `monthly * 12 / 52`, 2dp).
+- `Floor Level`: normalized canonical labels (`Ground`, `First`, `Second`, or ranges like `Third to Fifth`), only from explicit visible floor text.
+- `Academic Year`: normalized canonical `YYYY/YY` format only.
+- `Incentives`: visible offer text only (booking tile, room-level, or property-level), kept separate from `Room Name` and `Price`.
 
 ## Historical Data Rules
 
@@ -82,6 +83,7 @@ Behavior:
 - installs dependencies and Playwright Chromium
 - appends new snapshot rows
 - commits workbook back when files changed
+- prints coverage audit lines for each configured source (rows, no room data, page unavailable, blocked/failed)
 
 ## Internal Docs
 
