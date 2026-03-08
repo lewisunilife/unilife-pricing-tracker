@@ -1,0 +1,62 @@
+﻿name: Unilife Pricing Snapshot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * *"
+    - cron: "0 9 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  scrape-and-commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run scraper
+        env:
+          ENFORCE_LONDON_9AM: "true"
+        run: |
+          python scraper/unilife_pricing_snapshot.py
+
+      - name: Detect file changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push updated workbook
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/Unilife_Pricing_Snapshot.xlsx
+          git commit -m "chore: update Unilife pricing snapshot"
+          git push
+
+      - name: Log summary
+        run: |
+          echo "Workflow completed."
+          if [ "${{ steps.changes.outputs.changed }}" = "true" ]; then
+            echo "Workbook updated and pushed to repository."
+          else
+            echo "No file changes to commit (likely non-09:00 London schedule run or no scrape output)."
+          fi
