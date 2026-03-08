@@ -12,6 +12,14 @@ MONTHLY_PRICE_RE = re.compile(
     rf"{CURRENCY_CHARS}\s*(\d{{2,5}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)\s*(?:pcm|per\s*calendar\s*month|per\s*month|monthly|/month)\b",
     re.IGNORECASE,
 )
+WEEKLY_PRICE_NO_CURRENCY_RE = re.compile(
+    r"\b(\d{2,5}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:pppw|ppw|pw|p/w|per\s*week|weekly|/week)\b",
+    re.IGNORECASE,
+)
+MONTHLY_PRICE_NO_CURRENCY_RE = re.compile(
+    r"\b(\d{2,5}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:pcm|per\s*calendar\s*month|per\s*month|monthly|/month)\b",
+    re.IGNORECASE,
+)
 
 ACADEMIC_RE = re.compile(r"\b(?:AY\s*)?((?:20)?\d{2})\s*[/\-]\s*((?:20)?\d{2})\b", re.IGNORECASE)
 CONTRACT_RE = re.compile(r"\b\d{1,2}\s*(?:weeks?|months?)\b", re.IGNORECASE)
@@ -94,6 +102,18 @@ def parse_price_to_weekly_numeric(value: Any) -> Optional[float]:
     monthly_hit = MONTHLY_PRICE_RE.search(text)
     if monthly_hit:
         amount = _parse_amount(monthly_hit.group(1))
+        if amount is None:
+            return None
+        return round((amount * 12) / 52, 2)
+
+    weekly_no_currency = WEEKLY_PRICE_NO_CURRENCY_RE.search(text)
+    if weekly_no_currency:
+        amount = _parse_amount(weekly_no_currency.group(1))
+        return round(amount, 2) if amount is not None else None
+
+    monthly_no_currency = MONTHLY_PRICE_NO_CURRENCY_RE.search(text)
+    if monthly_no_currency:
+        amount = _parse_amount(monthly_no_currency.group(1))
         if amount is None:
             return None
         return round((amount * 12) / 52, 2)

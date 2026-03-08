@@ -14,6 +14,14 @@ MONTHLY_PRICE_RE = re.compile(
     rf"{CURRENCY_CHARS}\s*(\d{{2,5}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)\s*(?:pcm|per\s*calendar\s*month|per\s*month|monthly|/month)\b",
     re.IGNORECASE,
 )
+WEEKLY_PRICE_NO_CURRENCY_RE = re.compile(
+    r"\b(\d{2,5}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:pppw|ppw|pw|p/w|per\s*week|weekly|/week)\b",
+    re.IGNORECASE,
+)
+MONTHLY_PRICE_NO_CURRENCY_RE = re.compile(
+    r"\b(\d{2,5}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:pcm|per\s*calendar\s*month|per\s*month|monthly|/month)\b",
+    re.IGNORECASE,
+)
 
 ROOMISH_RE = re.compile(
     r"\b(room|studio|suite|ensuite|en-suite|flat|apartment|bedroom|twodio|classic|premium|luxury|vip)\b",
@@ -140,6 +148,18 @@ def parse_price_to_weekly_numeric(text: Any) -> Optional[float]:
     monthly_hit = MONTHLY_PRICE_RE.search(value)
     if monthly_hit:
         amount = _parse_amount(monthly_hit.group(1))
+        if amount is None:
+            return None
+        return round((amount * 12) / 52, 2)
+
+    weekly_no_currency = WEEKLY_PRICE_NO_CURRENCY_RE.search(value)
+    if weekly_no_currency:
+        amount = _parse_amount(weekly_no_currency.group(1))
+        return round(amount, 2) if amount is not None else None
+
+    monthly_no_currency = MONTHLY_PRICE_NO_CURRENCY_RE.search(value)
+    if monthly_no_currency:
+        amount = _parse_amount(monthly_no_currency.group(1))
         if amount is None:
             return None
         return round((amount * 12) / 52, 2)
@@ -345,7 +365,7 @@ async def parse_cards_by_selectors(page: Page, title_selectors: List[str], scope
         ({titleSelectors, scopeSelectors}) => {
           const uniq = new Set();
           const out = [];
-          const bookingHints = ['book', 'reserve', 'availability', 'contract', 'tenancy', 'signing', 'portal'];
+          const bookingHints = ['book', 'reserve', 'availability', 'contract', 'tenancy', 'signing', 'portal', 'view-room', '/room', '/rooms'];
           for (const scopeSel of scopeSelectors) {
             const scopes = document.querySelectorAll(scopeSel);
             for (const node of scopes) {
@@ -404,7 +424,7 @@ async def collect_booking_links(
         ({titleSelectors, scopeSelectors}) => {
           const out = [];
           const seen = new Set();
-          const bookingHints = ['book', 'reserve', 'availability', 'contract', 'tenancy', 'signing', 'portal', 'rooms'];
+          const bookingHints = ['book', 'reserve', 'availability', 'contract', 'tenancy', 'signing', 'portal', 'view-room', '/room', '/rooms'];
 
           const pushLink = (href, text, roomHint) => {
             if (!href) return;

@@ -81,7 +81,7 @@ def build_candidate_row(
     context: SnapshotContext,
 ) -> Tuple[Dict[str, Any], str]:
     room_name = raw.get("Room Name", "")
-    property_name = source.property
+    property_name = normalize_space(raw.get("Property", "")) or source.property
     row: Dict[str, Any] = {
         "Snapshot ID": context.snapshot_id,
         "Snapshot Date": context.snapshot_date,

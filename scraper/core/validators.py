@@ -96,5 +96,10 @@ def infer_missing_price_reason(raw: Dict[str, Any], cleaned: Dict[str, Any], iss
 
 
 def is_publishable_row(row: Dict[str, Any]) -> bool:
-    # Accuracy over volume: require at least a clean room name.
-    return bool(normalize_space(row.get("Room Name", "")))
+    # Accuracy over volume: require clean room names and enforce strict blank-price rules.
+    if not normalize_space(row.get("Room Name", "")):
+        return False
+    if row.get("Price") is not None:
+        return True
+    availability = normalize_space(row.get("Availability", ""))
+    return availability in {"Sold Out", "Unavailable"}
