@@ -1,38 +1,84 @@
 ﻿# Unilife Pricing Tracker
 
-This repository runs an automated scraper for Unilife room pricing and stores historical snapshots in Excel.
+Production-ready pricing intelligence tracker for student accommodation with append-only historical snapshots.
 
-## What It Does
+## Overview
 
-- Scrapes live room/pricing data for Unilife properties.
-- Writes rows to `data/Unilife_Pricing_Snapshot.xlsx`.
-- Appends a new historical snapshot on each valid run, even if prices did not change.
-- Adds both `Snapshot Date` and `Run Timestamp` (Europe/London).
+- The tracker is **multi-city by design**.
+- **Southampton** is the first city implemented for competitor expansion.
+- Data is stored as a historical dataset in Excel and updated automatically by GitHub Actions.
 
-## Workbook Location
-
+Workbook path:
 - `data/Unilife_Pricing_Snapshot.xlsx`
-- Sheet: `All Pricing`
-- Columns:
-  - `Snapshot Date`
-  - `Run Timestamp`
-  - `Property`
-  - `Room Name`
-  - `Contract Length`
-  - `Price`
-  - `Availability`
-  - `Source URL`
 
-## Manual Run (GitHub Actions)
+Sheet:
+- `All Pricing`
 
-Use **Actions > Unilife Pricing Snapshot > Run workflow** (`workflow_dispatch`) to trigger a run on demand.
+## Schema
 
-## Daily Schedule and UK 9AM Logic
+The tracker writes rows using this exact column order:
 
-The workflow is scheduled at both `08:00 UTC` and `09:00 UTC` daily to handle UK daylight saving changes.
+1. `Snapshot ID`
+2. `Snapshot Date`
+3. `Run Timestamp`
+4. `City`
+5. `Operator`
+6. `Property`
+7. `Room Name`
+8. `Contract Length`
+9. `Price`
+10. `Availability`
+11. `Source URL`
+12. `Scrape Source`
 
-The scraper checks current `Europe/London` local time and only proceeds when local time is exactly **09:00**. Non-matching schedule runs exit cleanly without changing files.
+Notes:
+- `Snapshot ID` is the run-level ISO timestamp (same for all rows in one run).
+- `Run Timestamp` is in `Europe/London`.
+- `Scrape Source` is `GitHub Actions` for workflow runs and `Local` for local runs.
 
-## Automatic Commit Back to Repo
+## Historical Behavior
 
-After a successful 09:00 London run, the workflow commits and pushes the updated workbook back to this repository (only when files changed).
+- Dataset is append-only for normal operation.
+- New runs append beneath existing history, even when prices have not changed.
+- Deduplication is only within the current run.
+- No deduplication against historical runs.
+
+## City Coverage
+
+The scraper uses a city-driven configuration so additional cities can be added cleanly.
+
+Current implemented city:
+- Southampton
+
+Current Southampton operators:
+- Unilife
+- Yugo
+- Student Roost
+- Unite Students
+
+## Manual Usage
+
+Run locally from repo root:
+
+```bash
+python scraper/unilife_pricing_snapshot.py
+```
+
+Optional one-time workbook cleanup mode:
+
+```bash
+python scraper/unilife_pricing_snapshot.py --clean-existing
+```
+
+## GitHub Actions
+
+Workflow file:
+- `.github/workflows/unilife_pricing_snapshot.yml`
+
+Behavior:
+- Supports `workflow_dispatch` manual runs.
+- Runs daily on schedule.
+- Uses UTC cron plus in-script London 09:00 gating.
+- Installs Python dependencies and Playwright Chromium.
+- Runs scraper and appends new rows.
+- Commits updated workbook back to the repository when files changed.
