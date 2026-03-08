@@ -24,9 +24,10 @@ Multi-city student accommodation pricing intelligence tracker with append-only h
 11. Contract Length
 12. Academic Year
 13. Price
-14. Availability
-15. Source URL
-16. Scrape Source
+14. Incentives
+15. Availability
+16. Source URL
+17. Scrape Source
 
 ## ID Definitions
 
@@ -34,56 +35,28 @@ Multi-city student accommodation pricing intelligence tracker with append-only h
 
 Stable deterministic hall identifier for `Operator + Property`.
 
-- Canonical text normalization (case/whitespace/punctuation)
-- Deterministic slug + stable hash suffix
-- Does **not** depend on run date or row order
-
 ### ROOM ID
 
 Stable deterministic room identifier for `Operator + Property + Room Name`.
 
-- Canonical text normalization
-- Deterministic slug + stable hash suffix
-- Blank if room name is blank
-- Does **not** depend on run date or row order
+## Field Rules
 
-## Floor Level and Academic Year
-
-- `Floor Level` is populated only when publicly visible in source text.
-- `Academic Year` is populated only when publicly visible in source text.
-- Neither field is guessed or fabricated.
+- `Room Name`: title-selector based and cleaned; excludes price/CTA/offer text.
+- `Floor Level`: populated only from explicit visible floor text.
+- `Academic Year`: populated only from explicit visible year text.
+- `Incentives`: visible offer text only (cashback, bus pass, bedding pack, vouchers, discounts, etc.).
 
 ## Historical Data Rules
 
 - Append-only history.
 - New runs append new rows only.
-- No cross-history dedupe.
-- Historical rows must never be destructively overwritten.
-- Schema migrations/backfills are allowed for newly introduced metadata fields.
+- No destructive overwrites of valid historical snapshots.
+- Schema migrations/backfills are allowed for new metadata columns.
 
 ## Southampton Master Property List
 
 Southampton source URLs are maintained in:
 - `scraper/source_config.py`
-
-This includes property-level URLs for:
-- Abodus Student Living
-- Canvas Student
-- Capitol Students
-- Collegiate
-- CRM Students
-- Every Student
-- Hello Student
-- Homes for Students
-- Host Students
-- Mezzino
-- Now Students
-- Prestige Student Living
-- Student Roost
-- Unilife
-- Unite Students
-- Vita Student
-- Yugo
 
 ## Running Locally
 
@@ -91,7 +64,7 @@ This includes property-level URLs for:
 python scraper/unilife_pricing_snapshot.py
 ```
 
-Optional migration-only mode:
+Migration-only mode:
 
 ```bash
 python scraper/unilife_pricing_snapshot.py --clean-existing
@@ -109,14 +82,6 @@ Behavior:
 - installs dependencies and Playwright Chromium
 - appends new snapshot rows
 - commits workbook back when files changed
-
-## Adding New Sources Safely
-
-1. Add source entries in `scraper/source_config.py`.
-2. Reuse existing scraper type or add a new handler.
-3. Run scraper.
-
-This appends future snapshot rows without rewriting old historical data.
 
 ## Internal Docs
 

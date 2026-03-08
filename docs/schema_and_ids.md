@@ -17,78 +17,47 @@ Project: [unilife-pricing-tracker](https://github.com/lewisunilife/unilife-prici
 11. Contract Length
 12. Academic Year
 13. Price
-14. Availability
-15. Source URL
-16. Scrape Source
-
-This order is enforced in:
-- scraper output rows
-- workbook migrations
-- append logic
-- workbook write order
+14. Incentives
+15. Availability
+16. Source URL
+17. Scrape Source
 
 ## HALL ID
 
-Purpose:
-- Stable hall-level identifier for analytics.
-- Unique by `Operator + Property`.
-
-Generation:
-- Canonicalize operator/property (lowercase, trimmed, punctuation-normalized slug)
-- Build deterministic token from canonical values
-- Add short stable hash suffix for collision resistance
-
-Format:
-- `hall-<operator-slug>-<property-slug>-<hash8>`
-
-Properties:
-- Deterministic across runs
-- Not dependent on row order, snapshot date, or workbook position
+Deterministic hall-level ID generated from canonical `Operator + Property` with a stable hash suffix.
 
 ## ROOM ID
 
-Purpose:
-- Stable room-type identifier for analytics.
-- Unique by `Operator + Property + Room Name`.
-
-Generation:
-- Canonicalize operator/property/room
-- Build deterministic token and stable hash
-
-Format:
-- `room-<operator-slug>-<property-slug>-<room-slug>-<hash8>`
+Deterministic room-level ID generated from canonical `Operator + Property + Room Name` with a stable hash suffix.
 
 Rules:
-- If `Property` is blank => `HALL ID` and `ROOM ID` blank
-- If `Room Name` is blank => `ROOM ID` blank
+- Blank property => blank HALL ID and ROOM ID
+- Blank room name => blank ROOM ID
 
 ## Floor Level
 
-Only populated when publicly visible in source text.
-Examples that may be captured:
-- Ground Floor
-- 1st Floor
-- Floors 3-5
-- Level 2
-
-No inference is performed when not visible.
+Populated only from explicit floor text visible on source pages/modals/tiles.
+No inferred values.
 
 ## Academic Year
 
-Only populated when publicly visible in source text.
-Examples:
-- 2025/26
-- 2026/27
+Populated only from explicit year text (e.g. `2026/27`).
+No inferred values.
 
-No inference is performed when not visible.
+## Incentives
 
-## Historical Data Rules
+Captures visible promotional text, e.g. cashback, bus pass, bedding/kitchen pack, voucher, discount, offer.
 
-- Append-only history: old snapshots are retained.
-- New runs append new rows.
-- No historical dedupe across runs.
-- Allowed workbook-wide modification: safe schema migration/backfill for new metadata columns.
-- Historical rows must never be destructively overwritten.
+Rules:
+- Incentives must stay in `Incentives`
+- Incentives must not pollute `Room Name` or `Price`
+
+## Historical Rules
+
+- Append-only snapshots
+- New runs append rows
+- No destructive rewrites of valid historical data
+- Safe schema migrations/backfills are allowed for new columns
 
 ## References
 

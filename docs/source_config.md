@@ -4,7 +4,7 @@ Project: [unilife-pricing-tracker](https://github.com/lewisunilife/unilife-prici
 
 ## Goal
 
-Keep source management config-driven so new URLs and future cities can be added without refactoring append/history logic.
+Keep source management config-driven so new URLs and future cities can be added without refactoring core append/history logic.
 
 ## Current Structure
 
@@ -14,17 +14,24 @@ File:
 Top-level object:
 - `CITY_SOURCES`
 
-Shape:
-- `CITY_SOURCES[<City>]` => list of source entries
-- each source entry contains:
-  - `operator`
-  - `property`
-  - `url`
-  - `scraper`
+Entry fields:
+- `operator`
+- `property`
+- `url`
+- `scraper`
+
+## Scraper Routing
+
+Current scraper routing types:
+- `unilife`: strict Unilife booking-modal parsing (contract tile rows)
+- `generic`: operator-targeted non-Unilife parsing with strict room-title and field separation
+
+Routing implementation:
+- `scraper/unilife_pricing_snapshot.py`
 
 ## Southampton Master Property List
 
-Southampton is the first detailed city list and is stored as property-level URLs where available.
+Southampton is the first detailed city list and uses property-level source URLs where possible.
 
 Current operators configured:
 - Abodus Student Living
@@ -45,34 +52,24 @@ Current operators configured:
 - Vita Student
 - Yugo
 
-## Scraper Routing
-
-Current scraper types:
-- `unilife`: Unilife-specific room/contract extraction logic
-- `generic`: reusable extractor for non-Unilife operator pages
-
-Routing happens in:
-- `scraper/unilife_pricing_snapshot.py`
-
 ## Adding New URLs Safely
 
-1. Add a new source entry under the target city in `CITY_SOURCES`.
-2. Choose existing `scraper` type (`generic` or `unilife`), or add a new scraper handler.
+1. Add a source entry to `CITY_SOURCES` under the correct city.
+2. Choose `scraper` type (`unilife` or `generic`) or add a new parser path.
 3. Run scraper.
-4. New rows append with new snapshot ID.
 
-This does not rewrite prior history.
+Result:
+- new snapshots append new rows
+- existing historical rows remain untouched
 
 ## Future City Expansion
 
-To add a city (e.g. Birmingham, Bristol, Winchester, Guildford):
+To add Birmingham, Bristol, Winchester, Guildford, etc.:
 
-1. Add a new city key in `CITY_SOURCES`.
-2. Add property-level source entries for that city.
-3. Reuse existing handlers or add new per-operator handlers as needed.
-4. Run and validate appended rows.
-
-No changes are required to core append history logic for normal additions.
+1. Add new city key in `CITY_SOURCES`
+2. Add property-level entries
+3. Reuse or extend parser routing
+4. Run and validate appended rows
 
 ## References
 
