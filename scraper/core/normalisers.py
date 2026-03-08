@@ -22,7 +22,7 @@ MONTHLY_PRICE_NO_CURRENCY_RE = re.compile(
 )
 
 ACADEMIC_RE = re.compile(r"\b(?:AY\s*)?((?:20)?\d{2})\s*[/\-]\s*((?:20)?\d{2})\b", re.IGNORECASE)
-CONTRACT_RE = re.compile(r"\b\d{1,2}\s*(?:weeks?|months?)\b", re.IGNORECASE)
+CONTRACT_RE = re.compile(r"\b\d{1,3}\s*(?:weeks?|months?|days?)\b", re.IGNORECASE)
 FLEXIBLE_STAY_RE = re.compile(r"\bflexible\s*stay\b", re.IGNORECASE)
 
 CTA_RE = re.compile(
@@ -154,7 +154,15 @@ def parse_contract_value_numeric(value: Any) -> Optional[float]:
             re.IGNORECASE,
         ),
         re.compile(
+            r"(?:rent\s*[:\-]?\s*)(\d{2,7}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:total(?:\s+for\s+the\s+contract)?|for\s+the\s+contract|contract\s+total)",
+            re.IGNORECASE,
+        ),
+        re.compile(
             rf"(?:total(?:\s+rent)?|contract(?:\s+value|\s+total|\s+rent)?)\s*[:\-]?\s*{CURRENCY_CHARS}\s*(\d{{2,7}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?:total(?:\s+rent)?|contract(?:\s+value|\s+total|\s+rent)?)\s*[:\-]?\s*(\d{2,7}(?:,\d{3})*(?:\.\d{1,2})?)",
             re.IGNORECASE,
         ),
     ]
@@ -354,6 +362,8 @@ def extract_contract_length(value: Any) -> str:
     match = CONTRACT_RE.search(text)
     if match:
         return normalize_space(match.group(0)).upper()
+    if re.search(r"\bsummer\b", text, flags=re.IGNORECASE):
+        return "SUMMER"
     if FLEXIBLE_STAY_RE.search(text):
         return "FLEXIBLE STAY"
     return ""
