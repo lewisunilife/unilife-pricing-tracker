@@ -85,6 +85,15 @@ jobs:
           rows_with_prices = as_int(summary.get('rows_with_prices', 0))
           rows_without_prices = as_int(summary.get('rows_without_prices', 0))
           properties_attempted = as_int(summary.get('properties_attempted', 0))
+          sources_attempted = as_int(summary.get('sources_attempted', 0))
+          sources_completed = as_int(summary.get('sources_completed', 0))
+          sources_failed = as_int(summary.get('sources_failed', 0))
+          sources_timed_out = as_int(summary.get('sources_timed_out', 0))
+          operators_attempted_total = as_int(summary.get('operators_attempted_total', 0))
+          operators_completed_total = as_int(summary.get('operators_completed_total', 0))
+          operators_failed_total = as_int(summary.get('operators_failed_total', 0))
+          operators_timed_out_total = as_int(summary.get('operators_timed_out_total', 0))
+          gate_enforced = str(summary.get('gate_enforced', ''))
           gate_reason = str(summary.get('gate_reason', ''))
           event_name = str(summary.get('event_name', ''))
 
@@ -97,6 +106,15 @@ jobs:
               fh.write(f'rows_with_prices={rows_with_prices}\n')
               fh.write(f'rows_without_prices={rows_without_prices}\n')
               fh.write(f'properties_attempted={properties_attempted}\n')
+              fh.write(f'sources_attempted={sources_attempted}\n')
+              fh.write(f'sources_completed={sources_completed}\n')
+              fh.write(f'sources_failed={sources_failed}\n')
+              fh.write(f'sources_timed_out={sources_timed_out}\n')
+              fh.write(f'operators_attempted_total={operators_attempted_total}\n')
+              fh.write(f'operators_completed_total={operators_completed_total}\n')
+              fh.write(f'operators_failed_total={operators_failed_total}\n')
+              fh.write(f'operators_timed_out_total={operators_timed_out_total}\n')
+              fh.write(f'gate_enforced={gate_enforced}\n')
               fh.write(f'gate_reason={gate_reason}\n')
               fh.write(f'event_name={event_name}\n')
           PY
@@ -147,8 +165,17 @@ jobs:
         run: |
           echo "Event type: ${{ github.event_name }}"
           echo "Scraper status: ${{ steps.summary.outputs.status }}"
+          echo "Gate enforced: ${{ steps.summary.outputs.gate_enforced }}"
           echo "Gate reason: ${{ steps.summary.outputs.gate_reason }}"
           echo "Snapshot ID: ${{ steps.summary.outputs.snapshot_id }}"
+          echo "Operators attempted: ${{ steps.summary.outputs.operators_attempted_total }}"
+          echo "Operators completed: ${{ steps.summary.outputs.operators_completed_total }}"
+          echo "Operators failed: ${{ steps.summary.outputs.operators_failed_total }}"
+          echo "Operators timed out: ${{ steps.summary.outputs.operators_timed_out_total }}"
+          echo "Sources attempted: ${{ steps.summary.outputs.sources_attempted }}"
+          echo "Sources completed: ${{ steps.summary.outputs.sources_completed }}"
+          echo "Sources failed: ${{ steps.summary.outputs.sources_failed }}"
+          echo "Sources timed out: ${{ steps.summary.outputs.sources_timed_out }}"
           echo "Properties attempted: ${{ steps.summary.outputs.properties_attempted }}"
           echo "Rows appended: ${{ steps.summary.outputs.rows_appended }}"
           echo "Rows with prices: ${{ steps.summary.outputs.rows_with_prices }}"
@@ -163,8 +190,17 @@ jobs:
             echo ""
             echo "- Event: \`${{ github.event_name }}\`"
             echo "- Scraper status: \`${{ steps.summary.outputs.status }}\`"
+            echo "- Gate enforced: \`${{ steps.summary.outputs.gate_enforced }}\`"
             echo "- Gate reason: \`${{ steps.summary.outputs.gate_reason }}\`"
             echo "- Snapshot ID: \`${{ steps.summary.outputs.snapshot_id }}\`"
+            echo "- Operators attempted: \`${{ steps.summary.outputs.operators_attempted_total }}\`"
+            echo "- Operators completed: \`${{ steps.summary.outputs.operators_completed_total }}\`"
+            echo "- Operators failed: \`${{ steps.summary.outputs.operators_failed_total }}\`"
+            echo "- Operators timed out: \`${{ steps.summary.outputs.operators_timed_out_total }}\`"
+            echo "- Sources attempted: \`${{ steps.summary.outputs.sources_attempted }}\`"
+            echo "- Sources completed: \`${{ steps.summary.outputs.sources_completed }}\`"
+            echo "- Sources failed: \`${{ steps.summary.outputs.sources_failed }}\`"
+            echo "- Sources timed out: \`${{ steps.summary.outputs.sources_timed_out }}\`"
             echo "- Properties attempted: \`${{ steps.summary.outputs.properties_attempted }}\`"
             echo "- Rows appended: \`${{ steps.summary.outputs.rows_appended }}\`"
             echo "- Rows with prices: \`${{ steps.summary.outputs.rows_with_prices }}\`"
