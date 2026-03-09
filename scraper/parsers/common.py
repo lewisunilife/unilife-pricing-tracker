@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from playwright.async_api import Page
 
-CURRENCY_CHARS = r"[\u00A3\u0141]"
+CURRENCY_CHARS = r"[£Ł]"
 MONEY_WITH_CURRENCY_RE = re.compile(rf"{CURRENCY_CHARS}\s*(\d{{2,7}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)")
 WEEKLY_PRICE_RE = re.compile(
     rf"{CURRENCY_CHARS}\s*(\d{{2,5}}(?:,\d{{3}})*(?:\.\d{{1,2}})?)\s*(?:pppw|ppw|pw|p/w|per\s*week|weekly|/week)\b",
@@ -40,6 +40,7 @@ INCENTIVE_PATTERNS = [
     r"free\s+annual\s+bus\s+pass",
     r"free\s+bus\s+pass",
     r"free\s+laundry",
+    r"refer\s+a\s+friend",
     r"bedding\s+pack(?:\s+included)?",
     r"kitchen\s+pack(?:\s+included|(?:\s+worth\s+[\u00A3\u0141]?\s*\d+)?)?",
     r"voucher",
