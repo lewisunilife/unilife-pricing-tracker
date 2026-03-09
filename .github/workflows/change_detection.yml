@@ -1,0 +1,39 @@
+name: PBSA Change Detection
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Unilife Pricing Snapshot"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  detect-and-report:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run change detection and send email if changes found
+        env:
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          python scripts/detect_changes_and_report.py

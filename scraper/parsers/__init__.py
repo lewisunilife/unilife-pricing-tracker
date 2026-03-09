@@ -38,6 +38,10 @@ def _adapter(name: str, fn: ParserFn) -> ParserAdapter:
     return ParserAdapter(name=name, parse_dom=fn, parse_interactive=fn)
 
 
+def _adapter_pair(name: str, dom_fn: ParserFn, interactive_fn: ParserFn) -> ParserAdapter:
+    return ParserAdapter(name=name, parse_dom=dom_fn, parse_interactive=interactive_fn)
+
+
 ADAPTERS: Dict[str, ParserAdapter] = {
     "abodus": _adapter("abodus", abodus_parser.parse),
     "canvas": _adapter("canvas", canvas_parser.parse),
@@ -52,7 +56,7 @@ ADAPTERS: Dict[str, ParserAdapter] = {
     "now_students": _adapter("now_students", now_students_parser.parse),
     "prestige": _adapter("prestige", prestige_parser.parse),
     "student_roost": _adapter("student_roost", student_roost_parser.parse),
-    "unilife": _adapter("unilife", unilife_parser.parse),
+    "unilife": _adapter_pair("unilife", unilife_parser.parse_dom, unilife_parser.parse_interactive),
     "unite": _adapter("unite", unite_parser.parse),
     "vita": _adapter("vita", vita_parser.parse),
     "yugo": _adapter("yugo", yugo_parser.parse),

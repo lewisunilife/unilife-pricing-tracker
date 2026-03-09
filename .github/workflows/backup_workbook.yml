@@ -1,0 +1,51 @@
+name: Daily Workbook Backup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  backup-workbook:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run backup script
+        run: |
+          python scripts/backup_workbook.py
+
+      - name: Commit and push backup if created
+        run: |
+          if ! git status --porcelain -- data/backups | grep -q .; then
+            echo "No new backup files to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+          git add data/backups
+          if git diff --cached --quiet; then
+            echo "No staged backup changes."
+            exit 0
+          fi
+
+          TODAY="$(date +%F)"
+          git commit -m "Daily workbook backup ${TODAY}"
+          git push origin HEAD:main

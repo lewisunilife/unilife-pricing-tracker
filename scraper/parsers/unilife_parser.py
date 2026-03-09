@@ -1,5 +1,7 @@
-﻿import re
+﻿import asyncio
+import re
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from playwright.async_api import Page
 
@@ -72,6 +74,24 @@ _NUM_TO_FLOOR = {
     10: "Tenth",
 }
 
+_TRACKING_QUERY_KEYS = {"_gl", "_ga", "_gid", "gclid", "fbclid"}
+
+
+def _canonical_booking_url(url: str) -> str:
+    raw = common.normalize_space(url)
+    if not raw:
+        return ""
+    parts = urlsplit(raw)
+    if not parts.query:
+        return raw
+    clean_pairs = []
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        key_low = key.lower()
+        if key_low in _TRACKING_QUERY_KEYS or key_low.startswith("utm_") or key_low.startswith("_ga"):
+            continue
+        clean_pairs.append((key, value))
+    query = urlencode(clean_pairs, doseq=True)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
 def _extract_best_academic_year(*texts: Any) -> str:
     counts: Dict[str, int] = {}
@@ -389,7 +409,8 @@ async def _collect_booking_candidates(
 
     merged: Dict[str, Dict[str, Any]] = {}
     for item in raw_links:
-        href = common.normalize_space(item.get("href", ""))
+        href_raw = common.normalize_space(item.get("href", ""))
+        href = _canonical_booking_url(href_raw)
         if not href or not CONCURRENT_LINK_RE.search(href):
             continue
         if href not in merged:
@@ -436,7 +457,8 @@ async def _collect_booking_candidates(
                 "incentives_hint": incentives,
             }
         )
-    return candidates
+    candidates.sort(key=lambda c: (0 if common.normalize_space(c.get("room_hint", "")) else 1, 0 if common.normalize_space(c.get("contract_hint", "")) else 1))
+    return candidates[:24]
 
 
 def _select_contract_value_target(rows: List[Dict[str, Any]], candidate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -526,7 +548,7 @@ async def _extract_rows_from_booking_link(
     href = candidate["href"]
     deep_page = await page.context.new_page()
     try:
-        ok = await common.safe_goto(deep_page, href, timeout=120000)
+        ok = await common.safe_goto(deep_page, href, timeout=45000)
         if not ok:
             return []
 
@@ -769,7 +791,7 @@ def _merge_unilife_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], str]:
+async def _parse_impl(page: Page, src: Dict[str, str], follow_booking_links: bool) -> Tuple[List[Dict[str, Any]], str]:
     await common.click_common(page)
     await page.wait_for_timeout(1200)
 
@@ -778,7 +800,18 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
     property_text = await page.evaluate(
         r"""
         () => {
-          const sels = ['.banner', '.hero', '[class*="promo"]', '[class*="offer"]', '[class*="announcement"]'];
+          const sels = [
+            '.banner',
+            '.hero',
+            '[class*="promo"]',
+            '[class*="offer"]',
+            '[class*="announcement"]',
+            '[class*="deal"]',
+            '[class*="cashback"]',
+            '[class*="bus-pass"]',
+            '[class*="kitchen"]',
+            '[class*="bedding"]'
+          ];
           const out = [];
           sels.forEach(s => document.querySelectorAll(s).forEach(n => {
             const t = (n.innerText || '').replace(/\s+/g, ' ').trim();
@@ -807,7 +840,9 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
     room_card_price: Dict[str, float] = {}
     room_card_incentives: Dict[str, str] = {}
     room_card_floor: Dict[str, str] = {}
+    room_card_availability: Dict[str, str] = {}
     known_rooms: List[str] = []
+    base_rows: List[Dict[str, Any]] = []
     for card in card_meta:
         title = common.clean_room_name(card.get("title", ""))
         if not title:
@@ -819,6 +854,10 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
         price = common.parse_price_to_weekly_numeric(text)
         if price is not None:
             room_card_price[key] = price
+        availability = common.infer_availability(text)
+        if availability == "Unknown" and price is not None:
+            availability = "Available"
+        room_card_availability[key] = availability
         room_card_incentives[key] = _scope_incentives(
             title,
             common.extract_and_normalise_incentives(text, _room_scoped_property_incentives(title, property_text)),
@@ -826,30 +865,44 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
         floor = _extract_unilife_floor(text)
         if floor:
             room_card_floor[key] = floor
-
-    candidates = await _collect_booking_candidates(
-        page=page,
-        property_text=property_text,
-        page_ay=page_ay,
-        room_card_incentives=room_card_incentives,
-        room_card_floor=room_card_floor,
-        room_card_price=room_card_price,
-        known_rooms=known_rooms,
-    )
+        base_rows.append(
+            {
+                "Room Name": title,
+                "Contract Length": _extract_contract_length_unilife(text),
+                "Price": price,
+                "Contract Value": common.parse_contract_value_numeric(text),
+                "Floor Level": floor,
+                "Academic Year": _extract_best_academic_year(text, page_ay),
+                "Incentives": room_card_incentives[key],
+                "Availability": availability,
+                "Source URL": src["url"],
+                "__missing_price_reason": common.classify_missing_price_reason(text, availability) if price is None else "",
+            }
+        )
 
     rows: List[Dict[str, Any]] = []
-    for candidate in candidates:
-        extracted_rows = await _extract_rows_from_booking_link(
+    if follow_booking_links:
+        candidates = await _collect_booking_candidates(
             page=page,
-            src=src,
-            candidate=candidate,
             property_text=property_text,
             page_ay=page_ay,
             room_card_incentives=room_card_incentives,
             room_card_floor=room_card_floor,
             room_card_price=room_card_price,
+            known_rooms=known_rooms,
         )
-        rows.extend(extracted_rows)
+        for candidate in candidates:
+            extracted_rows = await _extract_rows_from_booking_link(
+                page=page,
+                src=src,
+                candidate=candidate,
+                property_text=property_text,
+                page_ay=page_ay,
+                room_card_incentives=room_card_incentives,
+                room_card_floor=room_card_floor,
+                room_card_price=room_card_price,
+            )
+            rows.extend(extracted_rows)
 
     # Modal fallback when deep links are unavailable.
     if not rows:
@@ -875,7 +928,7 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
                 continue
 
     if not rows:
-        return [], "no extractable room rows"
+        rows = base_rows
 
     cleaned_rows: List[Dict[str, Any]] = []
     for row in rows:
@@ -902,7 +955,7 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
 
         availability = common.normalize_space(row.get("Availability", ""))
         if not availability:
-            availability = "Unknown"
+            availability = room_card_availability.get(room_key, "Unknown")
         if availability == "Unknown" and price is not None:
             availability = "Available"
 
@@ -931,3 +984,38 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
     if merged_rows:
         return merged_rows, ""
     return [], "no extractable room rows"
+
+
+async def parse_dom(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], str]:
+    # Castle Way DOM parsing can be heavy; switch to interactive fallback if this stage exceeds 60s.
+    try:
+        return await asyncio.wait_for(_parse_impl(page, src, follow_booking_links=False), timeout=60)
+    except asyncio.TimeoutError:
+        return [], "dom_timeout_switch_to_playwright"
+
+
+async def parse_interactive(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], str]:
+    try:
+        return await asyncio.wait_for(_parse_impl(page, src, follow_booking_links=True), timeout=105)
+    except asyncio.TimeoutError:
+        return await _parse_impl(page, src, follow_booking_links=False)
+
+
+async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], str]:
+    return await parse_interactive(page, src)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

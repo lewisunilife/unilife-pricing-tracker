@@ -1,4 +1,4 @@
-import re
+﻿import re
 import unicodedata
 from typing import Any, Dict, List, Optional
 
@@ -603,3 +603,4 @@ async def parse_contract_rows_from_page(
             }
         )
     return rows
+
