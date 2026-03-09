@@ -1,4 +1,4 @@
-﻿name: Unilife Pricing Snapshot
+name: Unilife Pricing Snapshot
 
 on:
   workflow_dispatch:
@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: unilife-pricing-snapshot
+  cancel-in-progress: false
+
 jobs:
   scrape-and-commit:
     runs-on: ubuntu-latest
@@ -16,6 +20,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,35 +35,142 @@ jobs:
           python -m pip install -r requirements.txt
           python -m playwright install --with-deps chromium
 
-      - name: Run scraper
-        env:
-          ENFORCE_LONDON_9AM: "true"
+      - name: Log trigger context
         run: |
-          python scraper/main.py --city Southampton
-
-      - name: Detect file changes
-        id: changes
-        run: |
-          if git diff --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+          echo "Event type: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Workbook target: data/Unilife_Pricing_Snapshot.xlsx"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "London 9AM gate enforcement: enabled (schedule run)"
           else
+            echo "London 9AM gate enforcement: disabled (manual run)"
+          fi
+
+      - name: Run scraper and write summary
+        id: scraper
+        env:
+          ENFORCE_LONDON_9AM: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
+        run: |
+          python scraper/main.py --city Southampton --summary-path .github/workflow-run-summary.json
+
+      - name: Parse scraper summary
+        id: summary
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+          import os
+
+          summary_path = pathlib.Path('.github/workflow-run-summary.json')
+          if not summary_path.exists():
+              print('ERROR: summary file missing', file=sys.stderr)
+              sys.exit(1)
+
+          summary = json.loads(summary_path.read_text(encoding='utf-8'))
+          print('Scraper summary:')
+          print(json.dumps(summary, indent=2))
+
+          def as_int(v):
+              try:
+                  return int(v)
+              except Exception:
+                  return 0
+
+          status = str(summary.get('status', 'unknown'))
+          snapshot_id = str(summary.get('snapshot_id', ''))
+          workbook_path = str(summary.get('workbook_path', 'data/Unilife_Pricing_Snapshot.xlsx'))
+          rows_appended = as_int(summary.get('rows_appended', 0))
+          rows_with_prices = as_int(summary.get('rows_with_prices', 0))
+          rows_without_prices = as_int(summary.get('rows_without_prices', 0))
+          properties_attempted = as_int(summary.get('properties_attempted', 0))
+          gate_reason = str(summary.get('gate_reason', ''))
+          event_name = str(summary.get('event_name', ''))
+
+          output_path = pathlib.Path(os.environ['GITHUB_OUTPUT'])
+          with output_path.open('a', encoding='utf-8') as fh:
+              fh.write(f'status={status}\n')
+              fh.write(f'snapshot_id={snapshot_id}\n')
+              fh.write(f'workbook_path={workbook_path}\n')
+              fh.write(f'rows_appended={rows_appended}\n')
+              fh.write(f'rows_with_prices={rows_with_prices}\n')
+              fh.write(f'rows_without_prices={rows_without_prices}\n')
+              fh.write(f'properties_attempted={properties_attempted}\n')
+              fh.write(f'gate_reason={gate_reason}\n')
+              fh.write(f'event_name={event_name}\n')
+          PY
+
+      - name: Detect workbook changes
+        id: workbook_change
+        run: |
+          if git status --porcelain -- data/Unilife_Pricing_Snapshot.xlsx | grep -q .; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Workbook changed: yes"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Workbook changed: no"
           fi
 
       - name: Commit and push updated workbook
-        if: steps.changes.outputs.changed == 'true'
+        id: commit_push
+        if: steps.workbook_change.outputs.changed == 'true'
         run: |
+          echo "commit_made=false" >> "$GITHUB_OUTPUT"
+          echo "push_made=false" >> "$GITHUB_OUTPUT"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/Unilife_Pricing_Snapshot.xlsx
-          git commit -m "chore: update PBSA pricing snapshot"
-          git push
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
 
-      - name: Log summary
-        run: |
-          echo "Workflow completed."
-          if [ "${{ steps.changes.outputs.changed }}" = "true" ]; then
-            echo "Workbook updated and pushed to repository."
-          else
-            echo "No file changes to commit (likely non-09:00 London schedule run or no scrape output)."
+          git add data/Unilife_Pricing_Snapshot.xlsx
+          if git diff --cached --quiet; then
+            echo "No staged workbook diff after add."
+            exit 0
           fi
+
+          SNAPSHOT_ID="${{ steps.summary.outputs.snapshot_id }}"
+          if [ -z "$SNAPSHOT_ID" ]; then
+            SNAPSHOT_ID="unknown-snapshot"
+          fi
+
+          git commit -m "chore: update PBSA pricing snapshot ($SNAPSHOT_ID)"
+          echo "commit_made=true" >> "$GITHUB_OUTPUT"
+
+          git push origin HEAD:main
+          echo "push_made=true" >> "$GITHUB_OUTPUT"
+
+      - name: Log workflow summary
+        if: always()
+        run: |
+          echo "Event type: ${{ github.event_name }}"
+          echo "Scraper status: ${{ steps.summary.outputs.status }}"
+          echo "Gate reason: ${{ steps.summary.outputs.gate_reason }}"
+          echo "Snapshot ID: ${{ steps.summary.outputs.snapshot_id }}"
+          echo "Properties attempted: ${{ steps.summary.outputs.properties_attempted }}"
+          echo "Rows appended: ${{ steps.summary.outputs.rows_appended }}"
+          echo "Rows with prices: ${{ steps.summary.outputs.rows_with_prices }}"
+          echo "Rows without prices: ${{ steps.summary.outputs.rows_without_prices }}"
+          echo "Workbook path: ${{ steps.summary.outputs.workbook_path }}"
+          echo "Workbook changed: ${{ steps.workbook_change.outputs.changed }}"
+          echo "Commit made: ${{ steps.commit_push.outputs.commit_made || 'false' }}"
+          echo "Push made: ${{ steps.commit_push.outputs.push_made || 'false' }}"
+
+          {
+            echo "## Unilife Pricing Snapshot Run"
+            echo ""
+            echo "- Event: \`${{ github.event_name }}\`"
+            echo "- Scraper status: \`${{ steps.summary.outputs.status }}\`"
+            echo "- Gate reason: \`${{ steps.summary.outputs.gate_reason }}\`"
+            echo "- Snapshot ID: \`${{ steps.summary.outputs.snapshot_id }}\`"
+            echo "- Properties attempted: \`${{ steps.summary.outputs.properties_attempted }}\`"
+            echo "- Rows appended: \`${{ steps.summary.outputs.rows_appended }}\`"
+            echo "- Rows with prices: \`${{ steps.summary.outputs.rows_with_prices }}\`"
+            echo "- Rows without prices: \`${{ steps.summary.outputs.rows_without_prices }}\`"
+            echo "- Workbook path: \`${{ steps.summary.outputs.workbook_path }}\`"
+            echo "- Workbook changed: \`${{ steps.workbook_change.outputs.changed }}\`"
+            echo "- Commit made: \`${{ steps.commit_push.outputs.commit_made || 'false' }}\`"
+            echo "- Push made: \`${{ steps.commit_push.outputs.push_made || 'false' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

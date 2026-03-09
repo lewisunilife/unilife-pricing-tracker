@@ -34,16 +34,20 @@ def scrape_source_label() -> str:
     return "GitHub Actions" if os.getenv("GITHUB_ACTIONS", "").lower() == "true" else "Local"
 
 
-def should_run_for_london_9am() -> bool:
+def should_run_for_london_9am() -> Tuple[bool, str]:
     event_name = os.getenv("GITHUB_EVENT_NAME", "").strip().lower()
     enforce = os.getenv("ENFORCE_LONDON_9AM", "").strip().lower() in {"1", "true", "yes"}
     if event_name != "schedule" and not enforce:
-        return True
+        return True, f"gate bypassed for event '{event_name or 'unknown'}'"
     now = dt.datetime.now(LONDON_TZ)
-    if now.hour == 9 and now.minute == 0:
-        return True
-    print(f"[INFO] Skipping run: Europe/London time is {now.strftime('%Y-%m-%d %H:%M:%S %Z')} (required: 09:00).")
-    return False
+    if now.hour == 9:
+        return True, f"within London 09:00 hour ({now.strftime('%Y-%m-%d %H:%M:%S %Z')})"
+    reason = (
+        f"outside London 09:00 hour ({now.strftime('%Y-%m-%d %H:%M:%S %Z')}); "
+        "scheduled runs execute only during 09:00-09:59 local time"
+    )
+    print(f"[INFO] Skipping run: {reason}")
+    return False, reason
 
 
 def load_sources(config_dir: Path, city_filter: Optional[str] = None) -> List[SourceRecord]:
@@ -127,8 +131,15 @@ async def _classify_block_reason(page) -> str:
 
 
 async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) -> Dict[str, Any]:
-    if force_9am_gate and not should_run_for_london_9am():
-        return {"status": "skipped"}
+    event_name = os.getenv("GITHUB_EVENT_NAME", "").strip().lower() or "unknown"
+    gate_ok, gate_reason = should_run_for_london_9am()
+    if force_9am_gate and not gate_ok:
+        return {
+            "status": "skipped",
+            "event_name": event_name,
+            "gate_reason": gate_reason,
+            "workbook_path": str(workbook_path()),
+        }
 
     mig = migrate_workbook(workbook_path())
     print(f"[INFO] Workbook migration complete: {mig['before']} -> {mig['after']} rows")
@@ -238,7 +249,11 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
     if not validated_records:
         return {
             "status": "no_rows",
+            "event_name": event_name,
+            "gate_reason": gate_reason,
             "snapshot_id": context.snapshot_id,
+            "snapshot_date": context.snapshot_date,
+            "workbook_path": str(workbook_path()),
             "coverage_summary": tracker.property_summary(),
         }
 
@@ -258,6 +273,8 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
 
     summary = {
         "status": "ok",
+        "event_name": event_name,
+        "gate_reason": gate_reason,
         "snapshot_id": context.snapshot_id,
         "snapshot_date": context.snapshot_date,
         "cities_attempted": sorted({s.city for s in sources}),
