@@ -153,7 +153,28 @@ def _extract_unilife_floor(text: Any) -> str:
     value = common.normalize_space(text).replace("forth", "fourth")
     if not value:
         return ""
-    low = value.lower()
+    low = value.lower().replace("–", "-").replace("—", "-")
+
+    floors_range_prefix = re.search(r"\bfloors?\s*(\d{1,2})\s*(?:-|to)\s*(\d{1,2})\b", low, flags=re.IGNORECASE)
+    if floors_range_prefix:
+        left = _token_to_floor_num(floors_range_prefix.group(1))
+        right = _token_to_floor_num(floors_range_prefix.group(2))
+        if left is not None and right is not None:
+            floor = _nums_to_floor_text([left, right])
+            if floor:
+                return floor
+
+    floors_list_prefix = re.search(
+        r"\bfloors?\s*((?:\d{1,2}\s*(?:,|&|and)\s*)+\d{1,2})\b",
+        low,
+        flags=re.IGNORECASE,
+    )
+    if floors_list_prefix:
+        tokens = re.split(r"\s*(?:,|&|and)\s*", floors_list_prefix.group(1), flags=re.IGNORECASE)
+        nums = [num for num in (_token_to_floor_num(token) for token in tokens) if num is not None]
+        floor = _nums_to_floor_text(nums)
+        if floor:
+            return floor
 
     grouped = re.search(
         r"(?:located\s+on|on)?\s*"
@@ -194,7 +215,62 @@ def _extract_unilife_floor(text: Any) -> str:
         if num is not None and num in _NUM_TO_FLOOR:
             return _NUM_TO_FLOOR[num]
 
+    floor_number = re.search(r"\b(?:floor|level)\s*(\d{1,2})\b", low, flags=re.IGNORECASE)
+    if floor_number:
+        num = _token_to_floor_num(floor_number.group(1))
+        if num is not None and num in _NUM_TO_FLOOR:
+            return _NUM_TO_FLOOR[num]
+
     return common.normalise_floor_level(value)
+
+
+def _room_floor_lookup_keys(room_name: str) -> List[str]:
+    base = common.normalize_space(room_name).lower()
+    if not base:
+        return []
+    compact = re.sub(r"\b(studio|studios|ensuite|en-suite|room|rooms)\b", "", base, flags=re.IGNORECASE)
+    compact = common.normalize_space(compact)
+    keys = [common.normalize_key(base)]
+    if compact:
+        keys.append(common.normalize_key(compact))
+    deduped = []
+    seen = set()
+    for key in keys:
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(key)
+    return deduped
+
+
+def _extract_property_floor_for_room(room_name: str, property_page_text: str) -> str:
+    text = common.normalize_currency_text(property_page_text)
+    if not text:
+        return ""
+    low_text = text.lower().replace("–", "-").replace("—", "-")
+    room = common.normalize_space(room_name).lower()
+    if not room:
+        return ""
+
+    compact = re.sub(r"\b(studio|studios|ensuite|en-suite|room|rooms)\b", "", room, flags=re.IGNORECASE)
+    compact = common.normalize_space(compact)
+    patterns: List[str] = []
+    if room:
+        patterns.append(rf"\b{re.escape(room)}\b")
+    if compact and compact != room:
+        if compact in {"classic", "premium", "luxury", "vip"}:
+            patterns.append(rf"\b{re.escape(compact)}(?:\s+studio(?:s)?)?\b(?!\s*plus)")
+        else:
+            patterns.append(rf"\b{re.escape(compact)}(?:\s+(?:studio|studios|ensuite|en-suite))?\b")
+
+    for pattern in patterns:
+        for match in re.finditer(pattern, low_text, flags=re.IGNORECASE):
+            start = max(0, match.start() - 90)
+            end = min(len(text), match.end() + 320)
+            snippet = text[start:end]
+            floor = _extract_unilife_floor(snippet)
+            if floor:
+                return floor
+    return ""
 
 
 def _extract_contract_length_unilife(text: Any) -> str:
@@ -1437,6 +1513,13 @@ async def _parse_impl(page: Page, src: Dict[str, str], follow_booking_links: boo
     if not rows:
         rows = base_rows
 
+    source_url_low = common.normalize_space(src.get("url", "")).lower()
+    allow_property_floor_backfill = (
+        "unilife-bargate-house" in source_url_low
+        or "unilife-high-street" in source_url_low
+    )
+    property_floor_cache: Dict[str, str] = {}
+
     cleaned_rows: List[Dict[str, Any]] = []
     for row in rows:
         room_name = common.clean_room_name(row.get("Room Name", ""))
@@ -1452,6 +1535,22 @@ async def _parse_impl(page: Page, src: Dict[str, str], follow_booking_links: boo
         card_floor = room_card_floor.get(room_key, "")
         if card_floor and (" to " in card_floor or "|" in card_floor) and floor and (" to " not in floor and "|" not in floor):
             floor = card_floor
+        if allow_property_floor_backfill and not floor:
+            lookup_keys = _room_floor_lookup_keys(room_name)
+            floor_hint = ""
+            for lookup_key in lookup_keys:
+                cached = property_floor_cache.get(lookup_key, None)
+                if cached:
+                    floor_hint = cached
+                    break
+                if cached == "":
+                    continue
+            if not floor_hint:
+                floor_hint = _extract_property_floor_for_room(room_name, page_body)
+            for lookup_key in lookup_keys:
+                property_floor_cache[lookup_key] = floor_hint
+            if floor_hint:
+                floor = floor_hint
         ay = _extract_best_academic_year(row.get("Academic Year", ""), page_ay)
         incentives = common.extract_and_normalise_incentives(
             row.get("Incentives", ""),
