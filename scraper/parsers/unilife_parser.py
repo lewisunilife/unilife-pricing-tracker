@@ -732,11 +732,46 @@ async def _extract_rows_from_booking_link(
         await deep_page.close()
 
 
-def _merge_unilife_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    merged: List[Dict[str, Any]] = []
-    index_by_key: Dict[Tuple[str, str, str, str, str], int] = {}
+def _is_concurrent_url(url: Any) -> bool:
+    return "concurrent.co.uk" in common.normalize_space(url).lower()
 
-    for row in rows:
+
+def _same_unilife_row(concurrent_row: Dict[str, Any], brochure_row: Dict[str, Any]) -> bool:
+    c_room = common.normalize_space(concurrent_row.get("Room Name", "")).lower()
+    b_room = common.normalize_space(brochure_row.get("Room Name", "")).lower()
+    if not c_room or not b_room or c_room != b_room:
+        return False
+
+    c_contract = common.normalize_space(concurrent_row.get("Contract Length", "")).lower()
+    b_contract = common.normalize_space(brochure_row.get("Contract Length", "")).lower()
+    if c_contract and b_contract and c_contract != b_contract:
+        return False
+
+    c_ay = common.normalize_space(concurrent_row.get("Academic Year", "")).lower()
+    b_ay = common.normalize_space(brochure_row.get("Academic Year", "")).lower()
+    if c_ay and b_ay and c_ay != b_ay:
+        return False
+
+    c_floor = common.normalize_space(concurrent_row.get("Floor Level", "")).lower()
+    b_floor = common.normalize_space(brochure_row.get("Floor Level", "")).lower()
+    if c_floor and b_floor and c_floor != b_floor:
+        return False
+
+    c_price = _price_key(concurrent_row.get("Price"))
+    b_price = _price_key(brochure_row.get("Price"))
+    if c_price and b_price and c_price != b_price:
+        return False
+    return True
+
+
+def _merge_unilife_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    concurrent_rows = [dict(row) for row in rows if _is_concurrent_url(row.get("Source URL", ""))]
+    brochure_rows = [dict(row) for row in rows if not _is_concurrent_url(row.get("Source URL", ""))]
+
+    # 1) Consolidate Concurrent rows first: they are canonical when available.
+    merged_concurrent: List[Dict[str, Any]] = []
+    index_by_key: Dict[Tuple[str, str, str, str, str], int] = {}
+    for row in concurrent_rows:
         key = (
             common.normalize_space(row.get("Room Name", "")),
             common.normalize_space(row.get("Contract Length", "")),
@@ -745,27 +780,49 @@ def _merge_unilife_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             common.normalize_space(row.get("Floor Level", "")),
         )
         if key not in index_by_key:
-            index_by_key[key] = len(merged)
-            merged.append(dict(row))
+            index_by_key[key] = len(merged_concurrent)
+            merged_concurrent.append(row)
             continue
 
-        existing = merged[index_by_key[key]]
+        existing = merged_concurrent[index_by_key[key]]
         if existing.get("Contract Value") is None and row.get("Contract Value") is not None:
             existing["Contract Value"] = row.get("Contract Value")
         if existing.get("Price") is None and row.get("Price") is not None:
             existing["Price"] = row.get("Price")
-        existing["Incentives"] = common.extract_and_normalise_incentives(existing.get("Incentives", ""), row.get("Incentives", ""))
-
         existing_av = common.normalize_space(existing.get("Availability", ""))
         new_av = common.normalize_space(row.get("Availability", ""))
         if (not existing_av or existing_av == "Unknown") and new_av:
             existing["Availability"] = new_av
+        existing["Incentives"] = common.extract_and_normalise_incentives(
+            existing.get("Incentives", ""),
+            row.get("Incentives", ""),
+        )
 
-        existing_url = common.normalize_space(existing.get("Source URL", ""))
-        new_url = common.normalize_space(row.get("Source URL", ""))
-        if "concurrent.co.uk" not in existing_url and "concurrent.co.uk" in new_url:
-            existing["Source URL"] = new_url
+    # 2) Supplement Concurrent rows with brochure-only metadata (incentives + explicit floor when missing).
+    for c_row in merged_concurrent:
+        for b_row in brochure_rows:
+            if not _same_unilife_row(c_row, b_row):
+                continue
+            c_row["Incentives"] = common.extract_and_normalise_incentives(
+                c_row.get("Incentives", ""),
+                b_row.get("Incentives", ""),
+            )
+            if not common.normalize_space(c_row.get("Floor Level", "")):
+                b_floor = common.normalize_space(b_row.get("Floor Level", ""))
+                if b_floor:
+                    c_row["Floor Level"] = b_floor
 
+    # 3) Keep brochure rows only where no matching Concurrent row exists.
+    fallback_brochure: List[Dict[str, Any]] = []
+    for b_row in brochure_rows:
+        has_concurrent_match = any(_same_unilife_row(c_row, b_row) for c_row in merged_concurrent)
+        if has_concurrent_match:
+            continue
+        fallback_brochure.append(b_row)
+
+    merged = merged_concurrent + fallback_brochure
+
+    # 4) Remove weaker blank-floor duplicates when explicit floor exists for same contract-level row.
     floor_specific: Dict[Tuple[str, str, str, str], bool] = {}
     for row in merged:
         base = (
@@ -778,6 +835,7 @@ def _merge_unilife_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             floor_specific[base] = True
 
     out: List[Dict[str, Any]] = []
+    seen_keys = set()
     for row in merged:
         base = (
             common.normalize_space(row.get("Room Name", "")),
@@ -787,6 +845,17 @@ def _merge_unilife_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         )
         if not common.normalize_space(row.get("Floor Level", "")) and floor_specific.get(base):
             continue
+
+        key = (
+            common.normalize_space(row.get("Room Name", "")),
+            common.normalize_space(row.get("Contract Length", "")),
+            common.normalize_space(row.get("Academic Year", "")),
+            _price_key(row.get("Price")),
+            common.normalize_space(row.get("Floor Level", "")),
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
         out.append(row)
     return out
 
