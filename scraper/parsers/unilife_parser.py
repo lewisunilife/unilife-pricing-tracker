@@ -691,13 +691,33 @@ def _extract_rows_from_candidate_context(
 
 
 def _parse_deposit_numeric(text: str) -> Optional[float]:
-    match = re.search(r"\bdeposit\b\s*:\s*[£Ł]\s*([\d,]+(?:\.\d{1,2})?)", text or "", re.IGNORECASE)
+    match = re.search(r"\bdeposit\b\s*:\s*[^\d]{0,6}\s*([\d,]+(?:\.\d{1,2})?)", text or "", re.IGNORECASE)
     if not match:
         return None
     try:
         return round(float(match.group(1).replace(",", "")), 2)
     except ValueError:
         return None
+
+
+def _parse_contract_value_numeric_unilife(text: str) -> Optional[float]:
+    value = common.normalize_currency_text(text)
+    if not value:
+        return None
+    patterns = [
+        r"\brent\b\s*:\s*[^\d]{0,6}\s*([\d,]+(?:\.\d{1,2})?)\s*total\s*for\s*the\s*contract",
+        r"([\d,]+(?:\.\d{1,2})?)\s*total\s*for\s*the\s*contract",
+        r"\btotal\s*rent\b\s*[:\-]?\s*[^\d]{0,6}\s*([\d,]+(?:\.\d{1,2})?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, value, re.IGNORECASE)
+        if not match:
+            continue
+        try:
+            return round(float(match.group(1).replace(",", "")), 2)
+        except ValueError:
+            continue
+    return None
 
 
 def _extract_bills_included(text: str) -> str:
@@ -886,9 +906,23 @@ async def _extract_rows_from_booking_link(
             await deep_page.wait_for_timeout(350)
 
             rendered_body = common.normalize_currency_text(await deep_page.inner_text("body"))
-            option_context = _extract_option_context(rendered_body, option_text)
+            selected_payload = await deep_page.evaluate(
+                r"""
+                () => {
+                    const checked = document.querySelector('input[type="radio"]:checked');
+                    if (!checked) return { text: '', id: '' };
+                    const radioLabel = checked.closest('label.new--radio') || checked.closest('label');
+                    const card = radioLabel?.closest('label.new--relative') || radioLabel;
+                    const holder = radioLabel?.querySelector('[id^="availability-"]');
+                    const text = (card?.innerText || radioLabel?.innerText || '').replace(/\s+/g, ' ').trim();
+                    return { text, id: holder ? holder.id : '' };
+                }
+                """
+            )
+            selected_text = common.normalize_currency_text(selected_payload.get("text", ""))
+            option_context = selected_text or _extract_option_context(rendered_body, option_text)
             parsed = _parse_unilife_availability_option_text(
-                option_text=option_text,
+                option_text=selected_text or option_text,
                 fallback_room=candidate.get("room_hint", ""),
                 fallback_floor=candidate.get("floor_hint", ""),
                 fallback_ay=body_ay,
@@ -907,8 +941,15 @@ async def _extract_rows_from_booking_link(
             if (not availability or availability == "Unknown") and price is not None:
                 availability = "Available"
 
-            contract_value = common.parse_contract_value_numeric(option_context) or common.parse_contract_value_numeric(rendered_body)
-            deposit = _parse_deposit_numeric(option_context)
+            contract_value = (
+                _parse_contract_value_numeric_unilife(selected_text)
+                or _parse_contract_value_numeric_unilife(option_context)
+                or _parse_contract_value_numeric_unilife(rendered_body)
+                or common.parse_contract_value_numeric(selected_text)
+                or common.parse_contract_value_numeric(option_context)
+                or common.parse_contract_value_numeric(rendered_body)
+            )
+            deposit = _parse_deposit_numeric(selected_text) or _parse_deposit_numeric(option_context)
             bills = _extract_bills_included(option_context)
             incentives = common.extract_and_normalise_incentives(
                 candidate.get("incentives_hint", ""),
@@ -940,19 +981,56 @@ async def _extract_rows_from_booking_link(
             )
 
         if rows:
-            deduped_rows: List[Dict[str, Any]] = []
-            seen = set()
+            by_full_key: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
             for row in rows:
-                key = (
+                full_key = (
                     common.normalize_space(row.get("Room Name", "")),
                     common.normalize_space(row.get("Contract Length", "")),
                     common.normalize_space(row.get("Academic Year", "")),
                     _price_key(row.get("Price")),
                     common.normalize_space(row.get("Floor Level", "")),
                 )
-                if key in seen:
+                existing = by_full_key.get(full_key)
+                if not existing:
+                    by_full_key[full_key] = row
                     continue
-                seen.add(key)
+                if existing.get("Contract Value") is None and row.get("Contract Value") is not None:
+                    existing["Contract Value"] = row.get("Contract Value")
+                if not common.normalize_space(existing.get("Academic Year", "")) and common.normalize_space(row.get("Academic Year", "")):
+                    existing["Academic Year"] = row.get("Academic Year")
+                if not common.normalize_space(existing.get("Floor Level", "")) and common.normalize_space(row.get("Floor Level", "")):
+                    existing["Floor Level"] = row.get("Floor Level")
+                existing["Incentives"] = common.extract_and_normalise_incentives(existing.get("Incentives", ""), row.get("Incentives", ""))
+                existing_av = common.normalize_space(existing.get("Availability", ""))
+                row_av = common.normalize_space(row.get("Availability", ""))
+                if (not existing_av or existing_av == "Unknown") and row_av:
+                    existing["Availability"] = row_av
+
+            merged_rows = list(by_full_key.values())
+            richer_base_keys = set()
+            for row in merged_rows:
+                ay = common.normalize_space(row.get("Academic Year", ""))
+                if ay:
+                    richer_base_keys.add(
+                        (
+                            common.normalize_space(row.get("Room Name", "")),
+                            common.normalize_space(row.get("Contract Length", "")),
+                            _price_key(row.get("Price")),
+                            common.normalize_space(row.get("Floor Level", "")),
+                        )
+                    )
+
+            deduped_rows: List[Dict[str, Any]] = []
+            for row in merged_rows:
+                base_key = (
+                    common.normalize_space(row.get("Room Name", "")),
+                    common.normalize_space(row.get("Contract Length", "")),
+                    _price_key(row.get("Price")),
+                    common.normalize_space(row.get("Floor Level", "")),
+                )
+                ay = common.normalize_space(row.get("Academic Year", ""))
+                if not ay and base_key in richer_base_keys:
+                    continue
                 deduped_rows.append(row)
             return deduped_rows
 
