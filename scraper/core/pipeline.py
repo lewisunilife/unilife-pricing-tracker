@@ -76,17 +76,17 @@ def scrape_source_label() -> str:
 def should_run_for_london_9am() -> Tuple[bool, str]:
     event_name = os.getenv("GITHUB_EVENT_NAME", "").strip().lower()
     enforce = os.getenv("ENFORCE_LONDON_9AM", "").strip().lower() in {"1", "true", "yes"}
-    if event_name != "schedule" and not enforce:
-        return True, f"gate bypassed for event '{event_name or 'unknown'}'"
     now = dt.datetime.now(LONDON_TZ)
-    if now.hour == 9:
-        return True, f"within London 09:00 hour ({now.strftime('%Y-%m-%d %H:%M:%S %Z')})"
-    reason = (
-        f"outside London 09:00 hour ({now.strftime('%Y-%m-%d %H:%M:%S %Z')}); "
-        "scheduled runs execute only during 09:00-09:59 local time"
-    )
-    print(f"[INFO] Skipping run: {reason}")
-    return False, reason
+    timestamp = now.strftime("%Y-%m-%d %H:%M:%S %Z")
+    if event_name == "schedule":
+        reason = f"scheduled event at {timestamp}; London time gate is informational only (no skip enforced)"
+        print(f"[INFO] {reason}")
+        return True, reason
+    if enforce:
+        reason = f"ENFORCE_LONDON_9AM=true at {timestamp}; strict gate disabled, run continues"
+        print(f"[INFO] {reason}")
+        return True, reason
+    return True, f"manual/non-schedule event '{event_name or 'unknown'}' at {timestamp}; no gate enforcement"
 
 
 def load_sources(config_dir: Path, city_filter: Optional[str] = None) -> List[SourceRecord]:
@@ -171,17 +171,8 @@ async def _classify_block_reason(page) -> str:
 
 async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) -> Dict[str, Any]:
     event_name = os.getenv("GITHUB_EVENT_NAME", "").strip().lower() or "unknown"
-    enforce_env = os.getenv("ENFORCE_LONDON_9AM", "").strip().lower() in {"1", "true", "yes"}
-    gate_enforced = force_9am_gate and (event_name == "schedule" or enforce_env)
-    gate_ok, gate_reason = should_run_for_london_9am()
-    if force_9am_gate and not gate_ok:
-        return {
-            "status": "skipped",
-            "event_name": event_name,
-            "gate_enforced": gate_enforced,
-            "gate_reason": gate_reason,
-            "workbook_path": str(workbook_path()),
-        }
+    gate_enforced = False
+    _gate_ok, gate_reason = should_run_for_london_9am()
 
     mig = migrate_workbook(workbook_path())
     print(f"[INFO] Workbook migration complete: {mig['before']} -> {mig['after']} rows")

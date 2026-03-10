@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 8 * * *"
-    - cron: "0 9 * * *"
+    - cron: "0 14 * * *"
 
 permissions:
   contents: write
@@ -42,15 +42,13 @@ jobs:
           echo "Actor: ${{ github.actor }}"
           echo "Workbook target: data/Unilife_Pricing_Snapshot.xlsx"
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "London 9AM gate enforcement: enabled (schedule run)"
+            echo "London time gate: informational only (scheduled runs are never skipped for late starts)"
           else
-            echo "London 9AM gate enforcement: disabled (manual run)"
+            echo "London time gate: informational only (manual run)"
           fi
 
       - name: Run scraper and write summary
         id: scraper
-        env:
-          ENFORCE_LONDON_9AM: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
         run: |
           python scraper/main.py --city Southampton --summary-path .github/workflow-run-summary.json
 
