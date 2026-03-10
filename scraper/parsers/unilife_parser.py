@@ -1,5 +1,6 @@
 ﻿import asyncio
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -92,6 +93,17 @@ def _canonical_booking_url(url: str) -> str:
         clean_pairs.append((key, value))
     query = urlencode(clean_pairs, doseq=True)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
+
+
+def _query_param(url: str, key_name: str) -> str:
+    raw = common.normalize_space(url)
+    if not raw:
+        return ""
+    wanted = key_name.lower()
+    for key, value in parse_qsl(urlsplit(raw).query, keep_blank_values=True):
+        if key.lower() == wanted:
+            return common.normalize_space(value)
+    return ""
 
 def _extract_best_academic_year(*texts: Any) -> str:
     counts: Dict[str, int] = {}
@@ -380,11 +392,21 @@ async def _collect_booking_candidates(
             let bestText = (a.innerText || '').replace(/\s+/g, ' ').trim();
             let cardText = '';
             let roomHint = '';
+            let rowText = '';
             for (let i = 0; i < 8 && node; i++) {
               const t = (node.innerText || '').replace(/\s+/g, ' ').trim();
               if (t && t.length > bestText.length && t.length < 2400) bestText = t;
               if (!cardText && t && t.length < 1200 && /room|studio|book now|available|week/i.test(t)) {
                 cardText = t;
+              }
+              if (
+                !rowText &&
+                t &&
+                t.length < 260 &&
+                /(£|Ł)\s*\d/i.test(t) &&
+                /(weeks?|days?|summer|pw|ppw|book now)/i.test(t)
+              ) {
+                rowText = t;
               }
               if (!roomHint) {
                 const title = node.querySelector('h1,h2,h3,h4,.title,[class*="title"]');
@@ -399,6 +421,7 @@ async def _collect_booking_candidates(
               link_text: (a.innerText || '').replace(/\s+/g, ' ').trim(),
               parent_text: bestText,
               card_text: cardText,
+              row_text: rowText,
               room_hint: roomHint,
             });
           }
@@ -408,18 +431,25 @@ async def _collect_booking_candidates(
     )
 
     merged: Dict[str, Dict[str, Any]] = {}
+    room_by_booking_id: Dict[str, str] = {}
     for item in raw_links:
         href_raw = common.normalize_space(item.get("href", ""))
         href = _canonical_booking_url(href_raw)
         if not href or not CONCURRENT_LINK_RE.search(href):
             continue
+        booking_id = _query_param(href, "id")
         if href not in merged:
-            merged[href] = {"href": href, "room_hint": "", "contexts": []}
+            merged[href] = {"href": href, "room_hint": "", "contexts": [], "row_contexts": [], "booking_id": booking_id}
         room_hint = common.clean_room_name(item.get("room_hint", ""))
         if room_hint and not _is_valid_unilife_room_name(room_hint):
             room_hint = ""
+        if room_hint and booking_id and booking_id not in room_by_booking_id:
+            room_by_booking_id[booking_id] = room_hint
         if room_hint and not merged[href]["room_hint"]:
             merged[href]["room_hint"] = room_hint
+        row_text = common.normalize_space(item.get("row_text", ""))
+        if row_text and row_text not in merged[href]["row_contexts"]:
+            merged[href]["row_contexts"].append(row_text)
         for key in ["parent_text", "card_text", "link_text"]:
             text = common.normalize_space(item.get(key, ""))
             if text and text not in merged[href]["contexts"]:
@@ -427,8 +457,31 @@ async def _collect_booking_candidates(
 
     candidates: List[Dict[str, Any]] = []
     for href, payload in merged.items():
-        context_text = " | ".join(payload.get("contexts", []))
+        contexts = payload.get("contexts", [])
+        row_contexts = payload.get("row_contexts", [])
+        row_context = common.normalize_space(next((value for value in row_contexts if value), ""))
+        if not row_context:
+            row_context = common.normalize_space(
+                next(
+                    (
+                        value
+                        for value in contexts
+                        if value
+                        and len(value) < 320
+                        and re.search(r"(£|Ł)\s*\d", value, re.IGNORECASE)
+                        and re.search(r"\b(weeks?|days?|summer|pw|ppw)\b", value, re.IGNORECASE)
+                    ),
+                    "",
+                )
+            )
+        context_text = " | ".join(contexts)
         room_hint = common.normalize_space(payload.get("room_hint", ""))
+        booking_id = common.normalize_space(payload.get("booking_id", ""))
+        if not room_hint and booking_id:
+            room_hint = room_by_booking_id.get(booking_id, "")
+        hint_text = row_context or context_text
+        if not room_hint:
+            room_hint = _guess_room_from_context(hint_text, known_rooms)
         if not room_hint:
             room_hint = _guess_room_from_context(context_text, known_rooms)
         if room_hint and not _is_valid_unilife_room_name(room_hint):
@@ -436,6 +489,7 @@ async def _collect_booking_candidates(
         room_key = common.normalize_key(room_hint)
 
         incentives = common.extract_and_normalise_incentives(
+            row_context,
             context_text,
             property_text,
             room_card_incentives.get(room_key, ""),
@@ -446,19 +500,29 @@ async def _collect_booking_candidates(
             {
                 "href": href,
                 "room_hint": room_hint,
+                "booking_id": booking_id,
+                "row_context": row_context,
                 "context_text": context_text,
-                "contract_hint": _extract_contract_length_unilife(context_text),
+                "contract_hint": _extract_contract_length_unilife(hint_text),
                 "price_hint": room_card_price.get(room_key)
                 if room_key in room_card_price
-                else common.parse_price_to_weekly_numeric(context_text),
-                "floor_hint": _extract_unilife_floor(context_text) or room_card_floor.get(room_key, ""),
-                "ay_hint": _extract_best_academic_year(context_text, page_ay),
-                "availability_hint": common.infer_availability(context_text),
+                else common.parse_price_to_weekly_numeric(hint_text),
+                "floor_hint": _extract_unilife_floor(hint_text) or room_card_floor.get(room_key, ""),
+                "ay_hint": _extract_best_academic_year(hint_text, context_text, page_ay),
+                "availability_hint": common.infer_availability(hint_text) or common.infer_availability(context_text),
                 "incentives_hint": incentives,
             }
         )
-    candidates.sort(key=lambda c: (0 if common.normalize_space(c.get("room_hint", "")) else 1, 0 if common.normalize_space(c.get("contract_hint", "")) else 1))
-    return candidates[:24]
+    candidates.sort(
+        key=lambda c: (
+            0 if common.normalize_space(c.get("room_hint", "")) else 1,
+            common.normalize_space(c.get("room_hint", "")).lower(),
+            common.normalize_space(c.get("contract_hint", "")).lower(),
+            _price_key(c.get("price_hint")),
+            0 if common.normalize_space(c.get("row_context", "")) else 1,
+        )
+    )
+    return candidates[:220]
 
 
 def _select_contract_value_target(rows: List[Dict[str, Any]], candidate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -535,6 +599,189 @@ def _parse_room_and_floor_from_option_text(option_text: str, room_hint: str, fal
     return room_name, floor
 
 
+_ROW_CONTEXT_OPTION_RE = re.compile(
+    r"(?P<contract>\d{1,3}\s*(?:weeks?|days?|months?))\s*"
+    r"(?:£|Ł)\s*(?P<price>\d[\d,]*(?:\.\d{1,2})?)\s*"
+    r"(?:pppw|ppw|pw|/week|per\s*week)?\s*"
+    r"(?P<floor>(?:lower\s*gr(?:ound)?|ground|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|"
+    r"floor\s*\d{1,2}|\d{1,2}(?:st|nd|rd|th)\s*floor|ground\s*floor))?",
+    flags=re.IGNORECASE,
+)
+
+
+def _extract_rows_from_candidate_context(
+    candidate: Dict[str, Any],
+    source_url: str,
+    property_text: str,
+    body_ay: str,
+    room_card_incentives: Dict[str, str],
+) -> List[Dict[str, Any]]:
+    room_name = common.clean_room_name(candidate.get("room_hint", ""))
+    if not room_name:
+        return []
+    room_key = common.normalize_key(room_name)
+    row_context = common.normalize_currency_text(candidate.get("row_context", "") or "")
+    full_context = common.normalize_currency_text(candidate.get("context_text", "") or "")
+    text = row_context or full_context
+    if not text:
+        return []
+
+    default_ay = _extract_best_academic_year(text, body_ay, candidate.get("ay_hint", ""))
+    default_availability = common.normalize_space(candidate.get("availability_hint", "")) or common.infer_availability(text)
+    default_incentives = _scope_incentives(
+        room_name,
+        common.extract_and_normalise_incentives(
+            candidate.get("incentives_hint", ""),
+            room_card_incentives.get(room_key, ""),
+            _room_scoped_property_incentives(room_name, property_text),
+        ),
+    )
+
+    rows: List[Dict[str, Any]] = []
+    for match in _ROW_CONTEXT_OPTION_RE.finditer(text):
+        contract = _extract_contract_length_unilife(match.group("contract"))
+        price = common.parse_price_to_weekly_numeric(f"£{match.group('price')}pw")
+        if price is None:
+            continue
+        floor_text = common.normalize_space(match.group("floor") or "")
+        floor = _extract_unilife_floor(floor_text) or common.normalize_space(candidate.get("floor_hint", ""))
+        availability = default_availability
+        if (not availability or availability == "Unknown") and price is not None:
+            availability = "Available"
+        rows.append(
+            {
+                "Room Name": room_name,
+                "Contract Length": contract,
+                "Price": price,
+                "Contract Value": None,
+                "Floor Level": floor,
+                "Academic Year": default_ay,
+                "Incentives": default_incentives,
+                "Availability": availability or "Unknown",
+                "Source URL": source_url,
+                "__missing_price_reason": "",
+            }
+        )
+
+    if rows:
+        return rows
+
+    price = common.parse_price_to_weekly_numeric(text)
+    contract = _extract_contract_length_unilife(text) or common.normalize_space(candidate.get("contract_hint", ""))
+    floor = _extract_unilife_floor(text) or common.normalize_space(candidate.get("floor_hint", ""))
+    availability = default_availability
+    if (not availability or availability == "Unknown") and price is not None:
+        availability = "Available"
+    if not contract and price is None and not floor:
+        return []
+    return [
+        {
+            "Room Name": room_name,
+            "Contract Length": contract,
+            "Price": price,
+            "Contract Value": None,
+            "Floor Level": floor,
+            "Academic Year": default_ay,
+            "Incentives": default_incentives,
+            "Availability": availability or "Unknown",
+            "Source URL": source_url,
+            "__missing_price_reason": common.classify_missing_price_reason(text, availability) if price is None else "",
+        }
+    ]
+
+
+def _parse_deposit_numeric(text: str) -> Optional[float]:
+    match = re.search(r"\bdeposit\b\s*:\s*[£Ł]\s*([\d,]+(?:\.\d{1,2})?)", text or "", re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return round(float(match.group(1).replace(",", "")), 2)
+    except ValueError:
+        return None
+
+
+def _extract_bills_included(text: str) -> str:
+    value = common.normalize_space(text)
+    if not value:
+        return ""
+    match = re.search(r"some bills included:\s*(.+)", value, re.IGNORECASE)
+    if not match:
+        return ""
+    tail = common.normalize_space(match.group(1))
+    tail = re.split(
+        r"\s+[A-Z][A-Za-z0-9 ()/&'\-]+:\s*(?:lower|ground|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d)",
+        tail,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    tail = re.split(r"\s+Your details\b|\s+Personal information\b", tail, maxsplit=1, flags=re.IGNORECASE)[0]
+    return common.normalize_space(tail.rstrip("."))
+
+
+def _option_text_key(option_text: str) -> str:
+    value = common.normalize_space(option_text)
+    if not value:
+        return ""
+    value = re.split(r"[£Ł]\s*\d", value, maxsplit=1)[0]
+    return common.normalize_space(value).lower()
+
+
+def _extract_option_context(body_text: str, option_text: str) -> str:
+    body = common.normalize_currency_text(body_text)
+    if not body:
+        return ""
+    key = _option_text_key(option_text)
+    if not key:
+        return body
+    start = body.lower().find(key)
+    if start < 0:
+        return body
+    # Keep a bounded window from the selected option onward; this contains
+    # option-specific Rent/Deposit/Bills text after selection changes.
+    return body[start : start + 1800]
+
+
+def _parse_unilife_availability_option_text(option_text: str, fallback_room: str, fallback_floor: str, fallback_ay: str) -> Dict[str, Any]:
+    value = common.normalize_currency_text(option_text)
+    room_name = common.clean_room_name(fallback_room)
+    floor = common.normalize_space(fallback_floor)
+
+    title_match = re.search(
+        r"^\s*([^:]+)\s*:\s*([^-]+?)\s*-\s*(\d{1,3}\s*(?:weeks?|days?|months?))\s*-\s*AY\s*((?:20)?\d{2}\s*/\s*(?:20)?\d{2})",
+        value,
+        re.IGNORECASE,
+    )
+    contract = ""
+    ay = ""
+    if title_match:
+        room_name = common.clean_room_name(title_match.group(1)) or room_name
+        floor = _extract_unilife_floor(title_match.group(2)) or floor
+        contract = _extract_contract_length_unilife(title_match.group(3))
+        ay = common.normalise_academic_year(title_match.group(4)) or ""
+
+    if not room_name:
+        room_name = common.clean_room_name(value.split(" - ")[0].split(":")[0])
+    if not contract:
+        contract = _extract_contract_length_unilife(value)
+    if not floor:
+        floor = _extract_unilife_floor(value) or fallback_floor
+    if not ay:
+        ay = _extract_best_academic_year(value, fallback_ay)
+
+    price = common.parse_price_to_weekly_numeric(value)
+    availability = common.infer_availability(value)
+    if availability == "Unknown" and price is not None:
+        availability = "Available"
+    return {
+        "Room Name": room_name,
+        "Contract Length": contract,
+        "Price": price,
+        "Floor Level": floor,
+        "Academic Year": ay,
+        "Availability": availability or "Unknown",
+    }
+
+
 async def _extract_rows_from_booking_link(
     page: Page,
     src: Dict[str, str],
@@ -544,86 +791,135 @@ async def _extract_rows_from_booking_link(
     room_card_incentives: Dict[str, str],
     room_card_floor: Dict[str, str],
     room_card_price: Dict[str, float],
+    contract_value_page: Optional[Page] = None,
 ) -> List[Dict[str, Any]]:
     href = candidate["href"]
-    deep_page = await page.context.new_page()
+    request_source_url = href
+    request_body = ""
     try:
-        ok = await common.safe_goto(deep_page, href, timeout=45000)
+        response = await page.context.request.get(href, timeout=12000)
+        request_source_url = common.normalize_space(response.url) or href
+        if response.ok:
+            request_body = common.normalize_currency_text(await response.text())
+    except Exception:
+        request_body = ""
+
+    request_ay = _extract_best_academic_year(request_body, page_ay, candidate.get("ay_hint", ""))
+    created_page = contract_value_page is None
+    deep_page = contract_value_page or await page.context.new_page()
+    try:
+        ok = await common.safe_goto(deep_page, href, timeout=30000)
         if not ok:
+            context_rows = _extract_rows_from_candidate_context(
+                candidate=candidate,
+                source_url=request_source_url,
+                property_text=property_text,
+                body_ay=request_ay,
+                room_card_incentives=room_card_incentives,
+            )
+            if context_rows:
+                return context_rows
             return []
 
+        await deep_page.wait_for_timeout(800)
         body_text = common.normalize_currency_text(await deep_page.inner_text("body"))
         body_ay = _extract_best_academic_year(body_text, page_ay, candidate.get("ay_hint", ""))
         body_contract_value = common.parse_contract_value_numeric(body_text)
-        option_payload = await deep_page.evaluate(
+        option_nodes = await deep_page.evaluate(
             r"""
             () => {
-              const options = [];
-              const selected = [];
+              const out = [];
               const seen = new Set();
-              const selectors = [
-                'label',
-                '[role="radio"]',
-                '[class*="availability"] label',
-                '[class*="tenancy"] label',
-                '[class*="contract"] label',
-              ];
-              const push = (raw) => {
-                const text = (raw || '').replace(/\s+/g, ' ').trim();
-                if (!text || text.length < 10 || text.length > 900) return;
-                if (!/(pppw|ppw|pw|weeks?|days?|summer|available from|sold out|waitlist|AY\s*\d|rent:|total for the contract)/i.test(text)) return;
-                if (seen.has(text)) return;
-                seen.add(text);
-                options.push(text);
-                if (/rent:|total for the contract/i.test(text)) selected.push(text);
-              };
-              selectors.forEach(sel => document.querySelectorAll(sel).forEach(node => push(node.innerText || '')));
-              return { options, selected };
+              const labels = [...document.querySelectorAll('label.new--radio')];
+              labels.forEach((label, index) => {
+                const text = (label.innerText || '').replace(/\s+/g, ' ').trim();
+                if (!text) return;
+                if (!/(weeks?|days?|months?|pppw|ppw|pw|ay\s*\d)/i.test(text)) return;
+                const holder = label.querySelector('[id^="availability-"]');
+                const id = holder ? holder.id : '';
+                const key = `${id}|${text}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                out.push({ index, id, text });
+              });
+              return out;
             }
             """
         )
 
-        option_texts: List[str] = option_payload.get("options", [])
-        selected_texts: List[str] = option_payload.get("selected", [])
-
         rows: List[Dict[str, Any]] = []
-        for option_text in option_texts:
-            room_name, floor = _parse_room_and_floor_from_option_text(
-                option_text,
-                room_hint=candidate.get("room_hint", ""),
+        for opt in option_nodes:
+            option_text = common.normalize_currency_text(opt.get("text", ""))
+            if not option_text:
+                continue
+            option_id = common.normalize_space(opt.get("id", ""))
+            option_index = int(opt.get("index", 0))
+            clicked = False
+            try:
+                if option_id:
+                    node = deep_page.locator(f"#{option_id}")
+                    if await node.count():
+                        await node.first.click(timeout=2000)
+                        clicked = True
+                if not clicked:
+                    radios = deep_page.locator("label.new--radio")
+                    if option_index < await radios.count():
+                        await radios.nth(option_index).click(timeout=2000)
+                        clicked = True
+            except Exception:
+                clicked = False
+
+            if clicked and option_id:
+                try:
+                    await deep_page.wait_for_function(
+                        """(expectedId) => {
+                            const checked = document.querySelector('input[type="radio"]:checked');
+                            if (!checked) return false;
+                            const holder = checked.closest('label')?.querySelector('[id^="availability-"]');
+                            return !!holder && holder.id === expectedId;
+                        }""",
+                        option_id,
+                        timeout=3000,
+                    )
+                except Exception:
+                    pass
+            await deep_page.wait_for_timeout(350)
+
+            rendered_body = common.normalize_currency_text(await deep_page.inner_text("body"))
+            option_context = _extract_option_context(rendered_body, option_text)
+            parsed = _parse_unilife_availability_option_text(
+                option_text=option_text,
+                fallback_room=candidate.get("room_hint", ""),
                 fallback_floor=candidate.get("floor_hint", ""),
+                fallback_ay=body_ay,
             )
+            room_name = common.clean_room_name(parsed.get("Room Name", ""))
             if not room_name:
                 continue
             room_key = common.normalize_key(room_name)
-
-            contract = _extract_contract_length_unilife(option_text) or candidate.get("contract_hint", "")
-            academic_year = _extract_best_academic_year(option_text, body_ay)
-            if not floor:
-                floor = room_card_floor.get(room_key, "")
-
-            price = common.parse_price_to_weekly_numeric(option_text)
-            if price is None:
-                if room_key in room_card_price:
-                    price = room_card_price[room_key]
-                elif candidate.get("price_hint") is not None:
-                    price = candidate.get("price_hint")
-
-            availability = common.infer_availability(option_text)
-            if not availability or availability == "Unknown":
-                availability = candidate.get("availability_hint", "")
+            floor = parsed.get("Floor Level", "") or room_card_floor.get(room_key, "")
+            contract = parsed.get("Contract Length", "") or candidate.get("contract_hint", "")
+            academic_year = parsed.get("Academic Year", "") or _extract_best_academic_year(option_context, body_ay)
+            price = parsed.get("Price")
+            if price is None and room_key in room_card_price:
+                price = room_card_price[room_key]
+            availability = parsed.get("Availability", "") or candidate.get("availability_hint", "")
             if (not availability or availability == "Unknown") and price is not None:
                 availability = "Available"
 
+            contract_value = common.parse_contract_value_numeric(option_context) or common.parse_contract_value_numeric(rendered_body)
+            deposit = _parse_deposit_numeric(option_context)
+            bills = _extract_bills_included(option_context)
             incentives = common.extract_and_normalise_incentives(
-                option_text,
                 candidate.get("incentives_hint", ""),
                 room_card_incentives.get(room_key, ""),
                 _room_scoped_property_incentives(room_name, property_text),
+                option_context,
             )
+            if bills:
+                incentives = common.extract_and_normalise_incentives(incentives, f"Bills included: {bills}")
             incentives = _scope_incentives(room_name, incentives)
 
-            contract_value = common.parse_contract_value_numeric(option_text)
             rows.append(
                 {
                     "Room Name": room_name,
@@ -634,78 +930,94 @@ async def _extract_rows_from_booking_link(
                     "Academic Year": academic_year,
                     "Incentives": incentives,
                     "Availability": availability or "Unknown",
-                    "Source URL": deep_page.url or href,
+                    "Source URL": common.normalize_space(deep_page.url) or request_source_url or href,
+                    "__deposit": deposit if deposit is not None else "",
+                    "__bills_included": bills,
+                    "__missing_price_reason": common.classify_missing_price_reason(option_context, availability)
+                    if price is None
+                    else "",
+                }
+            )
+
+        if rows:
+            deduped_rows: List[Dict[str, Any]] = []
+            seen = set()
+            for row in rows:
+                key = (
+                    common.normalize_space(row.get("Room Name", "")),
+                    common.normalize_space(row.get("Contract Length", "")),
+                    common.normalize_space(row.get("Academic Year", "")),
+                    _price_key(row.get("Price")),
+                    common.normalize_space(row.get("Floor Level", "")),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped_rows.append(row)
+            return deduped_rows
+
+        context_rows = _extract_rows_from_candidate_context(
+            candidate=candidate,
+            source_url=deep_page.url or request_source_url or href,
+            property_text=property_text,
+            body_ay=body_ay,
+            room_card_incentives=room_card_incentives,
+        )
+        if context_rows and body_contract_value is not None:
+            target = _select_contract_value_target(context_rows, candidate)
+            if target and target.get("Contract Value") is None:
+                target["Contract Value"] = body_contract_value
+        if context_rows:
+            return context_rows
+
+        # Final fallback to generic parser only when structured/row-context extraction produced nothing.
+        parsed = await common.parse_contract_rows_from_page(
+            deep_page,
+            source_url=href,
+            room_hint=candidate.get("room_hint", ""),
+            default_incentives=common.extract_and_normalise_incentives(candidate.get("incentives_hint", ""), property_text),
+        )
+        generic_rows: List[Dict[str, Any]] = []
+        for parsed_row in parsed:
+            room_name = common.clean_room_name(parsed_row.get("Room Name", "")) or common.clean_room_name(candidate.get("room_hint", ""))
+            if not room_name:
+                continue
+            room_key = common.normalize_key(room_name)
+            floor = _extract_unilife_floor(parsed_row.get("Floor Level", "")) or candidate.get("floor_hint", "") or room_card_floor.get(room_key, "")
+            contract = _extract_contract_length_unilife(parsed_row.get("Contract Length", "")) or candidate.get("contract_hint", "")
+            price = parsed_row.get("Price")
+            if price is None and room_key in room_card_price:
+                price = room_card_price[room_key]
+            availability = common.normalize_space(parsed_row.get("Availability", "")) or candidate.get("availability_hint", "")
+            if (not availability or availability == "Unknown") and price is not None:
+                availability = "Available"
+            incentives = _scope_incentives(
+                room_name,
+                common.extract_and_normalise_incentives(
+                    parsed_row.get("Incentives", ""),
+                    candidate.get("incentives_hint", ""),
+                    room_card_incentives.get(room_key, ""),
+                ),
+            )
+            generic_rows.append(
+                {
+                    "Room Name": room_name,
+                    "Contract Length": contract,
+                    "Price": price,
+                    "Contract Value": parsed_row.get("Contract Value"),
+                    "Floor Level": floor,
+                    "Academic Year": _extract_best_academic_year(parsed_row.get("Academic Year", ""), body_ay),
+                    "Incentives": incentives,
+                    "Availability": availability or "Unknown",
+                    "Source URL": common.normalize_space(parsed_row.get("Source URL", "")) or deep_page.url or href,
                     "__missing_price_reason": common.classify_missing_price_reason(candidate.get("context_text", ""), availability)
                     if price is None
                     else "",
                 }
             )
 
-        if rows and body_contract_value is not None:
-            value_candidate = dict(candidate)
-            if selected_texts:
-                selected_text = selected_texts[0]
-                selected_room, selected_floor = _parse_room_and_floor_from_option_text(
-                    selected_text,
-                    room_hint=candidate.get("room_hint", ""),
-                    fallback_floor=candidate.get("floor_hint", ""),
-                )
-                value_candidate["room_hint"] = selected_room or candidate.get("room_hint", "")
-                value_candidate["contract_hint"] = _extract_contract_length_unilife(selected_text) or candidate.get("contract_hint", "")
-                value_candidate["price_hint"] = common.parse_price_to_weekly_numeric(selected_text) or candidate.get("price_hint")
-                value_candidate["floor_hint"] = selected_floor or candidate.get("floor_hint", "")
-            target = _select_contract_value_target(rows, value_candidate)
-            if target and target.get("Contract Value") is None:
-                target["Contract Value"] = body_contract_value
-
-        # Fallback to generic parser only when no structured label options were found.
-        if not rows:
-            parsed = await common.parse_contract_rows_from_page(
-                deep_page,
-                source_url=href,
-                room_hint=candidate.get("room_hint", ""),
-                default_incentives=common.extract_and_normalise_incentives(candidate.get("incentives_hint", ""), property_text),
-            )
-            for parsed_row in parsed:
-                room_name = common.clean_room_name(parsed_row.get("Room Name", "")) or common.clean_room_name(candidate.get("room_hint", ""))
-                if not room_name:
-                    continue
-                room_key = common.normalize_key(room_name)
-                floor = _extract_unilife_floor(parsed_row.get("Floor Level", "")) or candidate.get("floor_hint", "") or room_card_floor.get(room_key, "")
-                contract = _extract_contract_length_unilife(parsed_row.get("Contract Length", "")) or candidate.get("contract_hint", "")
-                price = parsed_row.get("Price")
-                if price is None and room_key in room_card_price:
-                    price = room_card_price[room_key]
-                availability = common.normalize_space(parsed_row.get("Availability", "")) or candidate.get("availability_hint", "")
-                if (not availability or availability == "Unknown") and price is not None:
-                    availability = "Available"
-                incentives = _scope_incentives(
-                    room_name,
-                    common.extract_and_normalise_incentives(
-                        parsed_row.get("Incentives", ""),
-                        candidate.get("incentives_hint", ""),
-                        room_card_incentives.get(room_key, ""),
-                    ),
-                )
-                rows.append(
-                    {
-                        "Room Name": room_name,
-                        "Contract Length": contract,
-                        "Price": price,
-                        "Contract Value": parsed_row.get("Contract Value"),
-                        "Floor Level": floor,
-                        "Academic Year": _extract_best_academic_year(parsed_row.get("Academic Year", ""), body_ay),
-                        "Incentives": incentives,
-                        "Availability": availability or "Unknown",
-                        "Source URL": common.normalize_space(parsed_row.get("Source URL", "")) or deep_page.url or href,
-                        "__missing_price_reason": common.classify_missing_price_reason(candidate.get("context_text", ""), availability)
-                        if price is None
-                        else "",
-                    }
-                )
-
-        if rows:
-            return rows
+        if generic_rows:
+            return generic_rows
 
         fallback_room = common.clean_room_name(candidate.get("room_hint", ""))
         if fallback_room:
@@ -729,7 +1041,8 @@ async def _extract_rows_from_booking_link(
             ]
         return []
     finally:
-        await deep_page.close()
+        if created_page:
+            await deep_page.close()
 
 
 def _is_concurrent_url(url: Any) -> bool:
@@ -960,18 +1273,65 @@ async def _parse_impl(page: Page, src: Dict[str, str], follow_booking_links: boo
             room_card_price=room_card_price,
             known_rooms=known_rooms,
         )
+        deduped_candidates: List[Dict[str, Any]] = []
+        seen_candidate_keys = set()
         for candidate in candidates:
-            extracted_rows = await _extract_rows_from_booking_link(
-                page=page,
-                src=src,
-                candidate=candidate,
-                property_text=property_text,
-                page_ay=page_ay,
-                room_card_incentives=room_card_incentives,
-                room_card_floor=room_card_floor,
-                room_card_price=room_card_price,
+            key = (
+                common.normalize_space(candidate.get("booking_id", "")).lower(),
+                common.normalize_space(candidate.get("room_hint", "")).lower(),
             )
-            rows.extend(extracted_rows)
+            if not key[0]:
+                key = (
+                    common.normalize_space(candidate.get("href", "")).lower(),
+                    key[1],
+                )
+            if key in seen_candidate_keys:
+                continue
+            seen_candidate_keys.add(key)
+            deduped_candidates.append(candidate)
+        candidates = deduped_candidates or candidates
+
+        grouped_candidates: Dict[str, List[Dict[str, Any]]] = {}
+        for candidate in candidates:
+            room_key = common.normalize_space(candidate.get("room_hint", "")).lower() or "__unknown__"
+            grouped_candidates.setdefault(room_key, []).append(candidate)
+        interleaved_candidates: List[Dict[str, Any]] = []
+        ordered_rooms = sorted(grouped_candidates.keys())
+        while True:
+            wrote = False
+            for room_key in ordered_rooms:
+                bucket = grouped_candidates.get(room_key, [])
+                if not bucket:
+                    continue
+                interleaved_candidates.append(bucket.pop(0))
+                wrote = True
+            if not wrote:
+                break
+        candidates = interleaved_candidates or candidates
+
+        contract_value_page = await page.context.new_page()
+        loop_start = time.monotonic()
+        # Keep a bounded enrichment window so Castle Way remains complete without timing out.
+        is_castle_way = "castle-way" in common.normalize_space(src.get("url", "")).lower()
+        contract_value_enrich_budget_s = 45.0 if is_castle_way else 40.0
+        try:
+            for candidate in candidates:
+                elapsed = time.monotonic() - loop_start
+                enrich_page = contract_value_page if elapsed < contract_value_enrich_budget_s else None
+                extracted_rows = await _extract_rows_from_booking_link(
+                    page=page,
+                    src=src,
+                    candidate=candidate,
+                    property_text=property_text,
+                    page_ay=page_ay,
+                    room_card_incentives=room_card_incentives,
+                    room_card_floor=room_card_floor,
+                    room_card_price=room_card_price,
+                    contract_value_page=enrich_page,
+                )
+                rows.extend(extracted_rows)
+        finally:
+            await contract_value_page.close()
 
     # Modal fallback when deep links are unavailable.
     if not rows:
@@ -1065,7 +1425,7 @@ async def parse_dom(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any
 
 async def parse_interactive(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], str]:
     try:
-        return await asyncio.wait_for(_parse_impl(page, src, follow_booking_links=True), timeout=105)
+        return await asyncio.wait_for(_parse_impl(page, src, follow_booking_links=True), timeout=240)
     except asyncio.TimeoutError:
         return await _parse_impl(page, src, follow_booking_links=False)
 
