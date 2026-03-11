@@ -166,11 +166,25 @@ class Delta:
 class SummaryStats:
     total_changes: int
     affected_properties: int
+    rate_change_count: int
+    rate_increase_count: int
+    rate_decrease_count: int
+    contract_value_change_count: int
+    incentive_change_count: int
+    availability_change_count: int
+    new_option_count: int
+    removed_option_count: int
     biggest_increase: str
     biggest_decrease: str
+    busiest_operator: str
     busiest_property: str
+    biggest_mover: str
     scope_label: str
-    detail_lines: List[str]
+    rate_change_lines: List[str]
+    contract_value_change_lines: List[str]
+    incentive_change_lines: List[str]
+    availability_change_lines: List[str]
+    contract_option_lines: List[str]
 
 
 def _build_deltas(previous: Dict[Tuple[str, ...], Dict[str, Any]], latest: Dict[Tuple[str, ...], Dict[str, Any]]) -> Dict[str, Any]:
@@ -376,63 +390,182 @@ def _price_change_extremes(price_changes: List[Delta]) -> Tuple[str, str]:
     return biggest_increase, biggest_decrease
 
 
+def _fmt_price_change_detail(delta: Delta) -> str:
+    op, prop, room, contract, ay, floor = delta.key
+    room_type, room_name = _split_room_identity(room)
+    parts = [prop]
+    if room_type:
+        parts.append(room_type)
+    parts.append(room_name or room)
+    if contract:
+        parts.append(contract)
+    if floor:
+        parts.append(floor)
+    if ay:
+        parts.append(ay)
+
+    old_num = delta.old.get("Price")
+    new_num = delta.new.get("Price")
+    rate_text = f"{_fmt_money(old_num)} -> {_fmt_money(new_num)}"
+    if old_num is not None and new_num is not None:
+        diff = round(new_num - old_num, 2)
+        sign = "+" if diff > 0 else ""
+        rate_text = f"{rate_text} ({sign}\u00a3{diff:.2f})"
+    parts.append(rate_text)
+    return " | ".join(part for part in parts if _norm_text(part))
+
+
+def _fmt_contract_value_change_detail(delta: Delta) -> str:
+    op, prop, room, contract, ay, floor = delta.key
+    room_type, room_name = _split_room_identity(room)
+    parts = [prop]
+    if room_type:
+        parts.append(room_type)
+    parts.append(room_name or room)
+    if contract:
+        parts.append(contract)
+    if floor:
+        parts.append(floor)
+    if ay:
+        parts.append(ay)
+    parts.append(
+        f"contract value {_fmt_money(delta.old.get('Contract Value'))} -> {_fmt_money(delta.new.get('Contract Value'))}"
+    )
+    return " | ".join(part for part in parts if _norm_text(part))
+
+
+def _fmt_incentive_change_detail(delta: Delta) -> str:
+    op, prop, room, contract, ay, floor = delta.key
+    room_type, room_name = _split_room_identity(room)
+    parts = [prop]
+    if room_type:
+        parts.append(room_type)
+    parts.append(room_name or room)
+    if contract:
+        parts.append(contract)
+    if floor:
+        parts.append(floor)
+    if ay:
+        parts.append(ay)
+    parts.append(f"{_norm_text(delta.old.get('Incentives')) or 'blank'} -> {_norm_text(delta.new.get('Incentives')) or 'blank'}")
+    return " | ".join(part for part in parts if _norm_text(part))
+
+
+def _fmt_availability_change_detail(delta: Delta) -> str:
+    op, prop, room, contract, ay, floor = delta.key
+    room_type, room_name = _split_room_identity(room)
+    parts = [prop]
+    if room_type:
+        parts.append(room_type)
+    parts.append(room_name or room)
+    if contract:
+        parts.append(contract)
+    if floor:
+        parts.append(floor)
+    if ay:
+        parts.append(ay)
+    parts.append(
+        f"{_norm_text(delta.old.get('Availability')) or 'Unknown'} -> {_norm_text(delta.new.get('Availability')) or 'Unknown'}"
+    )
+    return " | ".join(part for part in parts if _norm_text(part))
+
+
+def _fmt_contract_option_detail(key: Tuple[str, ...], label: str) -> str:
+    op, prop, room, contract, ay, floor = key
+    room_type, room_name = _split_room_identity(room)
+    parts = [label, prop]
+    if room_type:
+        parts.append(room_type)
+    parts.append(room_name or room)
+    if contract:
+        parts.append(contract)
+    if floor:
+        parts.append(floor)
+    if ay:
+        parts.append(ay)
+    return " | ".join(part for part in parts if _norm_text(part))
+
+
 def _build_summary_stats(deltas: Dict[str, Any]) -> SummaryStats:
+    operator_counts: Dict[str, int] = {}
     affected_counts: Dict[Tuple[str, str], int] = {}
+    movement_by_pair: Dict[Tuple[str, str], float] = {}
     affected_pairs = set()
 
     def mark_pair(key: Tuple[str, ...]) -> None:
+        operator = key[0]
         pair = (key[0], key[1])
+        operator_counts[operator] = operator_counts.get(operator, 0) + 1
         affected_pairs.add(pair)
         affected_counts[pair] = affected_counts.get(pair, 0) + 1
 
-    detail_lines: List[str] = []
     total_changes = 0
+    rate_change_lines: List[str] = []
+    contract_value_change_lines: List[str] = []
+    incentive_change_lines: List[str] = []
+    availability_change_lines: List[str] = []
+    contract_option_lines: List[str] = []
+    rate_increase_count = 0
+    rate_decrease_count = 0
 
     for delta in deltas["price_changes"]:
         total_changes += 1
         mark_pair(delta.key)
-        detail_lines.append(_describe_price_change(delta))
+        rate_change_lines.append(_describe_price_change(delta))
+        old_num = delta.old.get("Price")
+        new_num = delta.new.get("Price")
+        if old_num is not None and new_num is not None:
+            diff = round(new_num - old_num, 2)
+            if diff > 0:
+                rate_increase_count += 1
+            elif diff < 0:
+                rate_decrease_count += 1
+            pair = (delta.key[0], delta.key[1])
+            movement_by_pair[pair] = movement_by_pair.get(pair, 0.0) + abs(diff)
 
     for delta in deltas["contract_value_changes"]:
         total_changes += 1
         mark_pair(delta.key)
-        detail_lines.append(
-            f"{_describe_delta(delta, 'Contract value change')} | "
-            f"{_fmt_money(delta.old.get('Contract Value'))} -> {_fmt_money(delta.new.get('Contract Value'))}"
-        )
+        contract_value_change_lines.append(_fmt_contract_value_change_detail(delta))
 
     for delta in deltas["incentive_changes"]:
         total_changes += 1
         mark_pair(delta.key)
-        detail_lines.append(
-            f"{_describe_delta(delta, 'Incentive change')} | "
-            f"{_norm_text(delta.old.get('Incentives')) or 'blank'} -> {_norm_text(delta.new.get('Incentives')) or 'blank'}"
-        )
+        incentive_change_lines.append(_fmt_incentive_change_detail(delta))
 
     for delta in deltas["availability_changes"]:
         total_changes += 1
         mark_pair(delta.key)
-        detail_lines.append(
-            f"{_describe_delta(delta, 'Availability change')} | "
-            f"{_norm_text(delta.old.get('Availability')) or 'Unknown'} -> {_norm_text(delta.new.get('Availability')) or 'Unknown'}"
-        )
+        availability_change_lines.append(_fmt_availability_change_detail(delta))
 
     for key in deltas["new_options"]:
         total_changes += 1
         mark_pair(key)
-        detail_lines.append(_describe_key_change(key, "New contract option"))
+        contract_option_lines.append(_fmt_contract_option_detail(key, "New contract option"))
 
     for key in deltas["removed_options"]:
         total_changes += 1
         mark_pair(key)
-        detail_lines.append(_describe_key_change(key, "Removed contract option"))
+        contract_option_lines.append(_fmt_contract_option_detail(key, "Removed contract option"))
 
     biggest_increase, biggest_decrease = _price_change_extremes(deltas["price_changes"])
+
+    busiest_operator = "None"
+    if operator_counts:
+        operator, count = sorted(operator_counts.items(), key=lambda item: (-item[1], item[0]))[0]
+        busiest_operator = f"{operator} ({count} changes)"
 
     busiest_property = "None"
     if affected_counts:
         pair, count = sorted(affected_counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))[0]
         busiest_property = f"{pair[0]} | {pair[1]} ({count} changes)"
+
+    biggest_mover = "None"
+    if movement_by_pair:
+        pair, total_move = sorted(movement_by_pair.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))[0]
+        biggest_mover = f"{pair[0]} | {pair[1]} (\u00a3{total_move:.2f} absolute movement)"
+    elif busiest_property != "None":
+        biggest_mover = busiest_property
 
     scope_label = "isolated"
     if len(affected_pairs) >= 4:
@@ -443,11 +576,25 @@ def _build_summary_stats(deltas: Dict[str, Any]) -> SummaryStats:
     return SummaryStats(
         total_changes=total_changes,
         affected_properties=len(affected_pairs),
+        rate_change_count=len(deltas["price_changes"]),
+        rate_increase_count=rate_increase_count,
+        rate_decrease_count=rate_decrease_count,
+        contract_value_change_count=len(deltas["contract_value_changes"]),
+        incentive_change_count=len(deltas["incentive_changes"]),
+        availability_change_count=len(deltas["availability_changes"]),
+        new_option_count=len(deltas["new_options"]),
+        removed_option_count=len(deltas["removed_options"]),
         biggest_increase=biggest_increase,
         biggest_decrease=biggest_decrease,
+        busiest_operator=busiest_operator,
         busiest_property=busiest_property,
+        biggest_mover=biggest_mover,
         scope_label=scope_label,
-        detail_lines=detail_lines[:40],
+        rate_change_lines=rate_change_lines[:50],
+        contract_value_change_lines=contract_value_change_lines[:50],
+        incentive_change_lines=incentive_change_lines[:50],
+        availability_change_lines=availability_change_lines[:50],
+        contract_option_lines=contract_option_lines[:50],
     )
 
 
@@ -465,7 +612,18 @@ def _extract_response_text(payload: Dict[str, Any]) -> str:
     return ""
 
 
-def _generate_ai_summary(deltas: Dict[str, Any]) -> str:
+def _append_signature(body: str) -> str:
+    text = body.strip()
+    if not text:
+        return ""
+    return "\n".join([text, "", *SIGNATURE_LINES]).strip() + "\n"
+
+
+def _generate_ai_email_body(
+    latest_snapshot_id: str,
+    previous_snapshot_id: str,
+    deltas: Dict[str, Any],
+) -> str:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return ""
@@ -474,22 +632,75 @@ def _generate_ai_summary(deltas: Dict[str, Any]) -> str:
     if stats.total_changes <= 0:
         return ""
 
+    rate_direction = "mixed"
+    if stats.rate_change_count > 0:
+        if stats.rate_increase_count > 0 and stats.rate_decrease_count == 0:
+            rate_direction = "rising"
+        elif stats.rate_decrease_count > 0 and stats.rate_increase_count == 0:
+            rate_direction = "falling"
+
+    incentive_direction = "unchanged"
+    if stats.incentive_change_count > 0:
+        incentive_direction = "changing"
+
     prompt = "\n".join(
         [
-            "Write a concise internal monitoring summary for a PBSA pricing change email.",
-            "Use only the supplied facts. Do not invent causes or missing details.",
-            "Keep it professional, clear, and 4 to 7 sentences maximum.",
-            "State the total number of changes, the biggest price increase, the biggest price decrease, the operator/property with the most changes, and whether the run looks isolated or broad-based.",
-            "If there were no increases or no decreases, say that plainly.",
+            "Write the full plain-text body of an internal PBSA market-intelligence email for Southampton.",
+            "Use only the supplied data. Do not invent changes, reasons, or unsupported conclusions.",
+            "Write in a human, useful, internal market-update tone. Do not sound robotic.",
+            "Return only the email body. Do not include a subject line. Do not include code fences. Do not include the signature.",
+            "Start exactly with:",
+            "Hi team,",
             "",
+            "Please see below your PBSA Market Intelligence summary for Southampton.",
+            "",
+            "After that opening, write one short natural-language overview paragraph covering only supported observations.",
+            "Then include these exact headings in this order:",
+            "**Rate changes**",
+            "**Incentive changes**",
+            "**Availability changes**",
+            "**Market highlights**",
+            "Use plain-text bullets only. Group detailed bullets by operator where changes exist.",
+            "Under **Rate changes**, include weekly price changes, contract value changes, and any new or removed contract options.",
+            "If a section has no items, write '- None detected.'",
+            "In **Market highlights**, include bullets for the largest increase, largest decrease, busiest operator, biggest mover, and whether the run looks isolated or broad-based.",
+            "Keep the whole email concise and readable in Outlook/Gmail.",
+            "",
+            f"Previous Snapshot ID: {previous_snapshot_id}",
+            f"Latest Snapshot ID: {latest_snapshot_id}",
             f"Total detected changes: {stats.total_changes}",
             f"Affected operator/property pairs: {stats.affected_properties}",
+            f"Rate direction from numeric changes: {rate_direction}",
+            f"Rate change count: {stats.rate_change_count}",
+            f"Rate increases: {stats.rate_increase_count}",
+            f"Rate decreases: {stats.rate_decrease_count}",
+            f"Contract value change count: {stats.contract_value_change_count}",
+            f"Incentive activity: {incentive_direction}",
+            f"Incentive change count: {stats.incentive_change_count}",
+            f"Availability change count: {stats.availability_change_count}",
+            f"New contract option count: {stats.new_option_count}",
+            f"Removed contract option count: {stats.removed_option_count}",
+            f"Busiest operator: {stats.busiest_operator}",
             f"Operator/property with most changes: {stats.busiest_property}",
-            f"Run scope: {stats.scope_label}",
+            f"Biggest mover: {stats.biggest_mover}",
+            f"Run scope label: {stats.scope_label}",
             f"Biggest price increase: {stats.biggest_increase}",
             f"Biggest price decrease: {stats.biggest_decrease}",
-            "Detected changes:",
-            *stats.detail_lines,
+            "",
+            "Rate change source material:",
+            *(stats.rate_change_lines or ["None"]),
+            "",
+            "Contract value change source material:",
+            *(stats.contract_value_change_lines or ["None"]),
+            "",
+            "Contract option source material:",
+            *(stats.contract_option_lines or ["None"]),
+            "",
+            "Incentive change source material:",
+            *(stats.incentive_change_lines or ["None"]),
+            "",
+            "Availability change source material:",
+            *(stats.availability_change_lines or ["None"]),
         ]
     )
 
@@ -517,7 +728,10 @@ def _generate_ai_summary(deltas: Dict[str, Any]) -> str:
     except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError, ValueError, OSError):
         return ""
 
-    return _extract_response_text(response_payload)
+    body = _extract_response_text(response_payload)
+    if not _norm_text(body):
+        return ""
+    return _append_signature(body)
 
 
 def _build_email_body(
@@ -525,7 +739,6 @@ def _build_email_body(
     previous_snapshot_id: str,
     deltas: Dict[str, Any],
     latest_df: pd.DataFrame,
-    ai_summary: str = "",
 ) -> str:
     lines: List[str] = []
     lines.append("PBSA Pricing Changes Detected \u2014 Southampton")
@@ -533,11 +746,6 @@ def _build_email_body(
     lines.append(f"Previous Snapshot ID: {previous_snapshot_id}")
     lines.append(f"Latest Snapshot ID: {latest_snapshot_id}")
     lines.append("")
-
-    if _norm_text(ai_summary):
-        lines.append("AI Summary")
-        lines.append(_norm_text(ai_summary))
-        lines.append("")
 
     lines.append("Section 1 \u2014 Price Changes")
     if deltas["price_changes"] or deltas["contract_value_changes"] or deltas["new_options"] or deltas["removed_options"]:
@@ -692,13 +900,16 @@ def main() -> int:
         return 0
 
     subject = "PBSA Pricing Changes Detected \u2014 Southampton"
-    ai_summary = _generate_ai_summary(deltas)
-    body = _build_email_body(
+    ai_body = _generate_ai_email_body(
+        latest_snapshot_id=latest_snapshot,
+        previous_snapshot_id=previous_snapshot,
+        deltas=deltas,
+    )
+    body = ai_body or _build_email_body(
         latest_snapshot_id=latest_snapshot,
         previous_snapshot_id=previous_snapshot,
         deltas=deltas,
         latest_df=latest_df,
-        ai_summary=ai_summary,
     )
 
     _send_email(subject, body)
