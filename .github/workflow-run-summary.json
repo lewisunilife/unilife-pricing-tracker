@@ -1,0 +1,499 @@
+{
+  "status": "ok",
+  "event_name": "unknown",
+  "gate_enforced": false,
+  "gate_reason": "manual/non-schedule event 'unknown' at 2026-03-11 12:30:19 GMT; no gate enforcement",
+  "snapshot_id": "2026-03-11T12:30:21",
+  "snapshot_date": "2026-03-11",
+  "cities_attempted": [
+    "Southampton"
+  ],
+  "operators_attempted": [
+    "Abodus Student Living",
+    "CRM Students",
+    "Canvas Student",
+    "Capitol Students",
+    "Collegiate",
+    "Every Student",
+    "Hello Student",
+    "Homes for Students",
+    "Host Students",
+    "Mezzino",
+    "Now Students",
+    "Prestige Student Living",
+    "Student Roost",
+    "Unilife",
+    "Unite Students",
+    "Vita Student",
+    "Yugo"
+  ],
+  "properties_attempted": 20,
+  "sources_attempted": 20,
+  "sources_completed": 14,
+  "sources_failed": 5,
+  "sources_timed_out": 1,
+  "operators_attempted_total": 17,
+  "operators_completed_total": 12,
+  "operators_failed_total": 4,
+  "operators_timed_out_total": 1,
+  "rows_appended": 270,
+  "rows_with_prices": 261,
+  "rows_without_prices": 9,
+  "rows_with_contract_value": 150,
+  "rows_without_contract_value": 120,
+  "missing_price_reasons": {
+    "sold_out": 9
+  },
+  "historical_total_rows": 8035,
+  "coverage_summary": [
+    {
+      "city": "Southampton",
+      "operator": "Abodus Student Living",
+      "property": "The Walls",
+      "status": "scraped successfully with rows",
+      "rows": 5,
+      "reasons": [
+        "https://abodusstudents.com/student-accommodation/southampton/the-walls/ => failed (api candidates checked; no confident rows)",
+        "https://abodusstudents.com/student-accommodation/southampton/the-walls/ => failed (no starrez room cards)",
+        "https://abodusstudents.com/student-accommodation/southampton/the-walls/ => failed (no starrez room cards)",
+        "https://portal.abodusstudents.com/StarRezPortalX/7549F38A/22/32/Book_Now_-Choose_your_room?UrlToken=4715A6B3&LowerRoomRateValue=0&UpperRoomRateValue=0&TermID=242&RoomLocationID=5&DateStart=08%20March%202026&DateEnd=15%20March%202026 => failed (api candidates checked; no confident rows)",
+        "https://portal.abodusstudents.com/StarRezPortalX/7549F38A/22/32/Book_Now_-Choose_your_room?UrlToken=4715A6B3&LowerRoomRateValue=0&UpperRoomRateValue=0&TermID=242&RoomLocationID=5&DateStart=08%20March%202026&DateEnd=15%20March%202026 => success (dom extraction)",
+        "https://portal.abodusstudents.com/StarRezPortalX/EACFF4AC/22/32/Book_Now_-Choose_your_room?UrlToken=4715A6B3&LowerRoomRateValue=0&UpperRoomRateValue=0&TermID=253&RoomLocationID=5&DateStart=05%20September%202026&DateEnd=10%20July%202027 => failed (api candidates checked; no confident rows)",
+        "https://portal.abodusstudents.com/StarRezPortalX/EACFF4AC/22/32/Book_Now_-Choose_your_room?UrlToken=4715A6B3&LowerRoomRateValue=0&UpperRoomRateValue=0&TermID=253&RoomLocationID=5&DateStart=05%20September%202026&DateEnd=10%20July%202027 => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Canvas Student",
+      "property": "Capital House",
+      "status": "scraped successfully with rows",
+      "rows": 6,
+      "reasons": [
+        "https://www.canvas-world.com/en/locations/united-kingdom/southampton/capital-house => failed (api candidates checked; no confident rows)",
+        "https://www.canvas-world.com/en/locations/united-kingdom/southampton/capital-house => success (dom extraction)",
+        "https://www.canvas-world.com/en/locations/united-kingdom/southampton/capital-house#rooms => failed (api candidates checked; no confident rows)",
+        "https://www.canvas-world.com/en/locations/united-kingdom/southampton/capital-house#rooms => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Capitol Students",
+      "property": "Hampton Square",
+      "status": "scraped successfully with rows",
+      "rows": 1,
+      "reasons": [
+        "https://www.capitolstudents.com/locations/southampton/southampton-hampton-square/ => failed (api candidates checked; no confident rows)",
+        "https://www.capitolstudents.com/locations/southampton/southampton-hampton-square/ => success (dom extraction)",
+        "https://hamptonportal.capitolstudents.com/southampton/southampton-hampton-square/student/ => failed (api candidates checked; no confident rows)",
+        "https://hamptonportal.capitolstudents.com/southampton/southampton-hampton-square/student/ => failed (parser_selector_failure)",
+        "https://hamptonportal.capitolstudents.com/southampton/southampton-hampton-square/student/ => blocked (parser_selector_failure)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Collegiate",
+      "property": "Park House",
+      "status": "scraped successfully with rows",
+      "rows": 1,
+      "reasons": [
+        "https://www.collegiate-ac.com/uk/student-accommodation/southampton/park-house/ => failed (api candidates checked; no confident rows)",
+        "https://www.collegiate-ac.com/uk/student-accommodation/southampton/park-house/ => failed (hidden_deeper_in_flow)",
+        "https://www.collegiate-ac.com/uk/student-accommodation/southampton/park-house/ => failed (hidden_deeper_in_flow)",
+        "https://www.collegiate-ac.com/uk-student-accommodation/southampton/park-house/ => failed (api candidates checked; no confident rows)",
+        "https://www.collegiate-ac.com/uk-student-accommodation/southampton/park-house/ => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "CRM Students",
+      "property": "The Bank",
+      "status": "scraped successfully with rows",
+      "rows": 7,
+      "reasons": [
+        "https://www.crm-students.com/student-accommodation/southampton/the-bank/ => failed (no api candidates discovered)",
+        "https://www.crm-students.com/student-accommodation/southampton/the-bank/ => failed (crm room links produced no rows)",
+        "https://www.crm-students.com/student-accommodation/southampton/the-bank/ => failed (crm room links produced no rows)",
+        "https://www.crm-students.com/southampton/the-bank/rooms => failed (api candidates checked; no confident rows)",
+        "https://www.crm-students.com/southampton/the-bank/rooms => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Every Student",
+      "property": "Lucia Foster Welch",
+      "status": "scraped successfully with rows",
+      "rows": 27,
+      "reasons": [
+        "https://www.everystudent.co.uk/student-accommodation/southampton/lucia-foster-welch/ => failed (api candidates checked; no confident rows)",
+        "https://www.everystudent.co.uk/student-accommodation/southampton/lucia-foster-welch/ => failed (parser_selector_failure)",
+        "https://www.everystudent.co.uk/student-accommodation/southampton/lucia-foster-welch/ => failed (parser_selector_failure)",
+        "https://everystudent.co.uk/southampton-student-accommodation/ => failed (api candidates checked; no confident rows)",
+        "https://everystudent.co.uk/southampton-student-accommodation/ => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Hello Student",
+      "property": "Brunswick Apartments",
+      "status": "no rows from checked pages",
+      "rows": 0,
+      "reasons": [
+        "https://www.hellostudent.co.uk/student-accommodation/southampton/brunswick-apartments/ => failed (api candidates checked; no confident rows)",
+        "https://www.hellostudent.co.uk/student-accommodation/southampton/brunswick-apartments/ => failed (hidden_deeper_in_flow)",
+        "https://www.hellostudent.co.uk/student-accommodation/southampton/brunswick-apartments/ => failed (hidden_deeper_in_flow)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Hello Student",
+      "property": "London Road Apartments",
+      "status": "no rows from checked pages",
+      "rows": 0,
+      "reasons": [
+        "https://www.hellostudent.co.uk/student-accommodation/southampton/london-road/ => failed (api candidates checked; no confident rows)",
+        "https://www.hellostudent.co.uk/student-accommodation/southampton/london-road/ => failed (hidden_deeper_in_flow)",
+        "https://www.hellostudent.co.uk/student-accommodation/southampton/london-road/ => failed (hidden_deeper_in_flow)",
+        "https://www.hellostudent.co.uk/book-a-room?property=979 => failed (api candidates checked; no confident rows)",
+        "https://www.hellostudent.co.uk/book-a-room?property=979 => failed (hidden_deeper_in_flow)",
+        "https://www.hellostudent.co.uk/book-a-room?property=979 => failed (hidden_deeper_in_flow)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Homes for Students",
+      "property": "Southampton",
+      "status": "scraped successfully with rows",
+      "rows": 96,
+      "reasons": [
+        "https://wearehomesforstudents.com/student-accommodation/southampton => failed (no api candidates discovered)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton => success (dom extraction)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/emily-davies => failed (no api candidates discovered)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/emily-davies => success (dom extraction)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/green-wood-court => failed (no api candidates discovered)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/green-wood-court => success (dom extraction)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/hamwic-hall => failed (no api candidates discovered)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/hamwic-hall => success (dom extraction)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/marland-house => failed (no api candidates discovered)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/marland-house => success (dom extraction)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/queens-gate => failed (no api candidates discovered)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/queens-gate => success (dom extraction)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/the-court-yard => failed (no api candidates discovered)",
+        "https://wearehomesforstudents.com/student-accommodation/southampton/the-court-yard => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Host Students",
+      "property": "Southampton Crossings",
+      "status": "scraped successfully with rows",
+      "rows": 7,
+      "reasons": [
+        "https://host-students.com/property/southampton-crossings/ => failed (api candidates checked; no confident rows)",
+        "https://host-students.com/property/southampton-crossings/ => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Mezzino",
+      "property": "Cumberland Place",
+      "status": "scraped successfully with rows",
+      "rows": 11,
+      "reasons": [
+        "https://www.mezzino.com/property/cumberland-place/ => failed (api candidates checked; no confident rows)",
+        "https://www.mezzino.com/property/cumberland-place/ => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Now Students",
+      "property": "Portswood House",
+      "status": "scraped successfully with rows",
+      "rows": 12,
+      "reasons": [
+        "https://www.nowstudents.co.uk/student-accommodation/southampton/portswood-house/ => failed (api candidates checked; no confident rows)",
+        "https://www.nowstudents.co.uk/student-accommodation/southampton/portswood-house/ => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Prestige Student Living",
+      "property": "Stanley Studios",
+      "status": "partially blocked; no rows",
+      "rows": 0,
+      "reasons": [
+        "https://prestigestudentliving.com/student-accommodation/southampton/stanley-studios => failed (no api candidates discovered)",
+        "https://prestigestudentliving.com/student-accommodation/southampton/stanley-studios => failed (parser_selector_failure)",
+        "https://prestigestudentliving.com/student-accommodation/southampton/stanley-studios => blocked (parser_selector_failure)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Student Roost",
+      "property": "Vincent Place",
+      "status": "scraped successfully with rows",
+      "rows": 2,
+      "reasons": [
+        "https://www.studentroost.co.uk/locations/southampton/vincent-place => failed (api candidates checked; no confident rows)",
+        "https://www.studentroost.co.uk/locations/southampton/vincent-place => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Unilife",
+      "property": "Bargate House",
+      "status": "scraped successfully with rows",
+      "rows": 11,
+      "reasons": [
+        "https://unilife.co.uk/property/unilife-bargate-house/ => failed (api candidates checked; no confident rows)",
+        "https://unilife.co.uk/property/unilife-bargate-house/ => failed (no extractable room rows)",
+        "https://unilife.co.uk/property/unilife-bargate-house/ => success (interactive extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Unilife",
+      "property": "High Street",
+      "status": "scraped successfully with rows",
+      "rows": 15,
+      "reasons": [
+        "https://unilife.co.uk/property/unilife-high-street/ => failed (api candidates checked; no confident rows)",
+        "https://unilife.co.uk/property/unilife-high-street/ => failed (no extractable room rows)",
+        "https://unilife.co.uk/property/unilife-high-street/ => success (interactive extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Unilife",
+      "property": "Castle Way",
+      "status": "scraped successfully with rows",
+      "rows": 80,
+      "reasons": [
+        "https://unilife.co.uk/property/castle-way/ => failed (api candidates checked; no confident rows)",
+        "https://unilife.co.uk/property/castle-way/ => failed (no extractable room rows)",
+        "https://unilife.co.uk/property/castle-way/ => success (interactive extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Unite Students",
+      "property": "Orion Point",
+      "status": "no rows from checked pages",
+      "rows": 0,
+      "reasons": [
+        "https://www.unitestudents.com/student-accommodation/southampton/orion-point => timed_out (api stage timeout after 120.0s)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Vita Student",
+      "property": "Richmond House",
+      "status": "scraped successfully with rows",
+      "rows": 8,
+      "reasons": [
+        "https://www.vitastudent.com/en/cities/southampton/richmond-house/ => failed (api candidates checked; no confident rows)",
+        "https://www.vitastudent.com/en/cities/southampton/richmond-house/ => success (dom extraction)"
+      ]
+    },
+    {
+      "city": "Southampton",
+      "operator": "Yugo",
+      "property": "Southampton",
+      "status": "scraped successfully with rows",
+      "rows": 31,
+      "reasons": [
+        "https://yugo.com/en-gb/global/united-kingdom/southampton => failed (api candidates checked; no confident rows)",
+        "https://yugo.com/en-gb/global/united-kingdom/southampton => failed (city overview page (property room cards parsed on property URLs))",
+        "https://yugo.com/en-gb/global/united-kingdom/southampton => failed (city overview page (property room cards parsed on property URLs))",
+        "https://yugo.com/en-gb/global/united-kingdom/southampton/austen-house => failed (api candidates checked; no confident rows)",
+        "https://yugo.com/en-gb/global/united-kingdom/southampton/austen-house => success (dom extraction)",
+        "https://yugo.com/en-gb/global/united-kingdom/southampton/crescent-place => failed (api candidates checked; no confident rows)",
+        "https://yugo.com/en-gb/global/united-kingdom/southampton/crescent-place => success (dom extraction)"
+      ]
+    }
+  ],
+  "workbook_path": "C:\\Users\\LewisHartley\\OneDrive - Stelling\\Documents\\Playground\\unilife-pricing-tracker\\data\\Unilife_Pricing_Snapshot.xlsx",
+  "raw_records_count": 320,
+  "validated_records_count": 270,
+  "source_outcomes": [
+    {
+      "operator": "Abodus Student Living",
+      "property": "The Walls",
+      "status": "completed",
+      "elapsed_seconds": 14.76,
+      "rows_extracted": 5,
+      "rows_appended": 5,
+      "reason": ""
+    },
+    {
+      "operator": "Canvas Student",
+      "property": "Capital House",
+      "status": "completed",
+      "elapsed_seconds": 32.82,
+      "rows_extracted": 6,
+      "rows_appended": 6,
+      "reason": ""
+    },
+    {
+      "operator": "Capitol Students",
+      "property": "Hampton Square",
+      "status": "failed",
+      "elapsed_seconds": 53.02,
+      "rows_extracted": 1,
+      "rows_appended": 0,
+      "reason": "no publishable rows"
+    },
+    {
+      "operator": "Collegiate",
+      "property": "Park House",
+      "status": "failed",
+      "elapsed_seconds": 38.08,
+      "rows_extracted": 1,
+      "rows_appended": 0,
+      "reason": "no publishable rows"
+    },
+    {
+      "operator": "CRM Students",
+      "property": "The Bank",
+      "status": "completed",
+      "elapsed_seconds": 29.68,
+      "rows_extracted": 7,
+      "rows_appended": 7,
+      "reason": ""
+    },
+    {
+      "operator": "Every Student",
+      "property": "Lucia Foster Welch",
+      "status": "completed",
+      "elapsed_seconds": 48.46,
+      "rows_extracted": 27,
+      "rows_appended": 27,
+      "reason": ""
+    },
+    {
+      "operator": "Hello Student",
+      "property": "Brunswick Apartments",
+      "status": "failed",
+      "elapsed_seconds": 34.31,
+      "rows_extracted": 0,
+      "rows_appended": 0,
+      "reason": "no publishable rows"
+    },
+    {
+      "operator": "Hello Student",
+      "property": "London Road Apartments",
+      "status": "failed",
+      "elapsed_seconds": 48.07,
+      "rows_extracted": 0,
+      "rows_appended": 0,
+      "reason": "no publishable rows"
+    },
+    {
+      "operator": "Homes for Students",
+      "property": "Southampton",
+      "status": "completed",
+      "elapsed_seconds": 11.02,
+      "rows_extracted": 96,
+      "rows_appended": 96,
+      "reason": ""
+    },
+    {
+      "operator": "Host Students",
+      "property": "Southampton Crossings",
+      "status": "completed",
+      "elapsed_seconds": 17.79,
+      "rows_extracted": 7,
+      "rows_appended": 7,
+      "reason": ""
+    },
+    {
+      "operator": "Mezzino",
+      "property": "Cumberland Place",
+      "status": "completed",
+      "elapsed_seconds": 7.13,
+      "rows_extracted": 11,
+      "rows_appended": 11,
+      "reason": ""
+    },
+    {
+      "operator": "Now Students",
+      "property": "Portswood House",
+      "status": "completed",
+      "elapsed_seconds": 35.86,
+      "rows_extracted": 12,
+      "rows_appended": 12,
+      "reason": ""
+    },
+    {
+      "operator": "Prestige Student Living",
+      "property": "Stanley Studios",
+      "status": "failed",
+      "elapsed_seconds": 3.2,
+      "rows_extracted": 0,
+      "rows_appended": 0,
+      "reason": "no publishable rows"
+    },
+    {
+      "operator": "Student Roost",
+      "property": "Vincent Place",
+      "status": "completed",
+      "elapsed_seconds": 5.01,
+      "rows_extracted": 2,
+      "rows_appended": 2,
+      "reason": ""
+    },
+    {
+      "operator": "Unilife",
+      "property": "Bargate House",
+      "status": "completed",
+      "elapsed_seconds": 34.36,
+      "rows_extracted": 11,
+      "rows_appended": 11,
+      "reason": ""
+    },
+    {
+      "operator": "Unilife",
+      "property": "High Street",
+      "status": "completed",
+      "elapsed_seconds": 35.3,
+      "rows_extracted": 15,
+      "rows_appended": 15,
+      "reason": ""
+    },
+    {
+      "operator": "Unilife",
+      "property": "Castle Way",
+      "status": "completed",
+      "elapsed_seconds": 70.6,
+      "rows_extracted": 80,
+      "rows_appended": 80,
+      "reason": ""
+    },
+    {
+      "operator": "Unite Students",
+      "property": "Orion Point",
+      "status": "timed_out",
+      "elapsed_seconds": 882.49,
+      "rows_extracted": 0,
+      "rows_appended": 0,
+      "reason": "api stage timeout after 120.0s"
+    },
+    {
+      "operator": "Vita Student",
+      "property": "Richmond House",
+      "status": "completed",
+      "elapsed_seconds": 86.02,
+      "rows_extracted": 8,
+      "rows_appended": 8,
+      "reason": ""
+    },
+    {
+      "operator": "Yugo",
+      "property": "Southampton",
+      "status": "completed",
+      "elapsed_seconds": 57.06,
+      "rows_extracted": 31,
+      "rows_appended": 31,
+      "reason": ""
+    }
+  ]
+}
