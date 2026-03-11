@@ -6,6 +6,7 @@ import json
 import smtplib
 from dataclasses import dataclass
 from email.mime.text import MIMEText
+from html import escape
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 from urllib import error as urllib_error
@@ -27,6 +28,15 @@ SIGNATURE_LINES = [
     "",
     "(Note: This message was sent via AI)",
 ]
+SIGNATURE_HTML = (
+    "Kind Regards"
+    "<br><br>"
+    "Artificial Intelligence"
+    "<br>"
+    "Unilife PBSA Market Intelligence Monitoring"
+    "<br><br>"
+    "(Note: This message was sent via AI)"
+)
 
 WORKBOOK_PATH = Path(__file__).resolve().parents[1] / "data" / "Unilife_Pricing_Snapshot.xlsx"
 SHEET_NAME = "All Pricing"
@@ -619,96 +629,41 @@ def _append_signature(body: str) -> str:
     return "\n".join([text, "", *SIGNATURE_LINES]).strip() + "\n"
 
 
-def _generate_ai_email_body(
-    latest_snapshot_id: str,
-    previous_snapshot_id: str,
-    deltas: Dict[str, Any],
-) -> str:
+def _append_html_signature(body: str) -> str:
+    text = body.strip()
+    if not text:
+        return ""
+    return (
+        f"{text}"
+        '<div style="margin-top:28px; font-size:14px; line-height:1.7; color:#243b53;">'
+        f"{SIGNATURE_HTML}"
+        "</div>"
+    )
+
+
+def _fmt_email_money(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"\u00a3{value:.2f}"
+
+
+def _html_text(value: Any, fallback: str = "—") -> str:
+    text = _norm_text(value)
+    if not text:
+        text = fallback
+    return escape(text)
+
+
+def _call_openai(prompt: str, max_output_tokens: int) -> str:
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return ""
-
-    stats = _build_summary_stats(deltas)
-    if stats.total_changes <= 0:
-        return ""
-
-    rate_direction = "mixed"
-    if stats.rate_change_count > 0:
-        if stats.rate_increase_count > 0 and stats.rate_decrease_count == 0:
-            rate_direction = "rising"
-        elif stats.rate_decrease_count > 0 and stats.rate_increase_count == 0:
-            rate_direction = "falling"
-
-    incentive_direction = "unchanged"
-    if stats.incentive_change_count > 0:
-        incentive_direction = "changing"
-
-    prompt = "\n".join(
-        [
-            "Write the full plain-text body of an internal PBSA market-intelligence email for Southampton.",
-            "Use only the supplied data. Do not invent changes, reasons, or unsupported conclusions.",
-            "Write in a human, useful, internal market-update tone. Do not sound robotic.",
-            "Return only the email body. Do not include a subject line. Do not include code fences. Do not include the signature.",
-            "Start exactly with:",
-            "Hi team,",
-            "",
-            "Please see below your PBSA Market Intelligence summary for Southampton.",
-            "",
-            "After that opening, write one short natural-language overview paragraph covering only supported observations.",
-            "Then include these exact headings in this order:",
-            "**Rate changes**",
-            "**Incentive changes**",
-            "**Availability changes**",
-            "**Market highlights**",
-            "Use plain-text bullets only. Group detailed bullets by operator where changes exist.",
-            "Under **Rate changes**, include weekly price changes, contract value changes, and any new or removed contract options.",
-            "If a section has no items, write '- None detected.'",
-            "In **Market highlights**, include bullets for the largest increase, largest decrease, busiest operator, biggest mover, and whether the run looks isolated or broad-based.",
-            "Keep the whole email concise and readable in Outlook/Gmail.",
-            "",
-            f"Previous Snapshot ID: {previous_snapshot_id}",
-            f"Latest Snapshot ID: {latest_snapshot_id}",
-            f"Total detected changes: {stats.total_changes}",
-            f"Affected operator/property pairs: {stats.affected_properties}",
-            f"Rate direction from numeric changes: {rate_direction}",
-            f"Rate change count: {stats.rate_change_count}",
-            f"Rate increases: {stats.rate_increase_count}",
-            f"Rate decreases: {stats.rate_decrease_count}",
-            f"Contract value change count: {stats.contract_value_change_count}",
-            f"Incentive activity: {incentive_direction}",
-            f"Incentive change count: {stats.incentive_change_count}",
-            f"Availability change count: {stats.availability_change_count}",
-            f"New contract option count: {stats.new_option_count}",
-            f"Removed contract option count: {stats.removed_option_count}",
-            f"Busiest operator: {stats.busiest_operator}",
-            f"Operator/property with most changes: {stats.busiest_property}",
-            f"Biggest mover: {stats.biggest_mover}",
-            f"Run scope label: {stats.scope_label}",
-            f"Biggest price increase: {stats.biggest_increase}",
-            f"Biggest price decrease: {stats.biggest_decrease}",
-            "",
-            "Rate change source material:",
-            *(stats.rate_change_lines or ["None"]),
-            "",
-            "Contract value change source material:",
-            *(stats.contract_value_change_lines or ["None"]),
-            "",
-            "Contract option source material:",
-            *(stats.contract_option_lines or ["None"]),
-            "",
-            "Incentive change source material:",
-            *(stats.incentive_change_lines or ["None"]),
-            "",
-            "Availability change source material:",
-            *(stats.availability_change_lines or ["None"]),
-        ]
-    )
 
     payload = {
         "model": OPENAI_SUMMARY_MODEL,
         "input": prompt,
         "temperature": 0.2,
-        "max_output_tokens": 220,
+        "max_output_tokens": max_output_tokens,
         "store": False,
     }
 
@@ -728,10 +683,340 @@ def _generate_ai_email_body(
     except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError, ValueError, OSError):
         return ""
 
-    body = _extract_response_text(response_payload)
-    if not _norm_text(body):
+    return _extract_response_text(response_payload)
+
+
+def _group_by_operator(items: List[Tuple[str, str]]) -> Dict[str, List[str]]:
+    grouped: Dict[str, List[str]] = {}
+    for operator, detail in items:
+        grouped.setdefault(operator or "Unknown", []).append(detail)
+    return grouped
+
+
+def _build_rate_change_table_rows(
+    deltas: Dict[str, Any],
+    previous_map: Dict[Tuple[str, ...], Dict[str, Any]],
+    latest_map: Dict[Tuple[str, ...], Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    rows: Dict[Tuple[str, ...], Dict[str, Any]] = {}
+
+    def ensure_row(key: Tuple[str, ...]) -> Dict[str, Any]:
+        if key not in rows:
+            op, prop, room, contract, ay, floor = key
+            previous = previous_map.get(key, {})
+            latest = latest_map.get(key, {})
+            source_url = _norm_text(latest.get("Source URL")) or _norm_text(previous.get("Source URL"))
+            room_name = _norm_text(room) or "—"
+            room_name_html = escape(room_name)
+            if source_url:
+                room_name_html = (
+                    f'<a href="{escape(source_url, quote=True)}" '
+                    'style="color:#0b57d0; text-decoration:none;">'
+                    f"{room_name_html}</a>"
+                )
+
+            rows[key] = {
+                "operator": _norm_text(op) or "—",
+                "property": _norm_text(prop) or "—",
+                "room_name": room_name,
+                "room_name_html": room_name_html,
+                "floor_level": _norm_text(floor) or "—",
+                "contract_length": _norm_text(contract) or "—",
+                "academic_year": _norm_text(ay) or "—",
+                "previous_price": _fmt_email_money(previous.get("Price")),
+                "latest_price": _fmt_email_money(latest.get("Price")),
+                "availability": _norm_text(latest.get("Availability")) or _norm_text(previous.get("Availability")) or "—",
+                "change_types": [],
+            }
+        return rows[key]
+
+    for delta in deltas["price_changes"]:
+        row = ensure_row(delta.key)
+        old_num = delta.old.get("Price")
+        new_num = delta.new.get("Price")
+        label = "Weekly price updated"
+        if old_num is not None and new_num is not None:
+            if new_num > old_num:
+                label = "Weekly price increased"
+            elif new_num < old_num:
+                label = "Weekly price decreased"
+        if label not in row["change_types"]:
+            row["change_types"].append(label)
+
+    for delta in deltas["contract_value_changes"]:
+        row = ensure_row(delta.key)
+        label = "Contract value updated"
+        if label not in row["change_types"]:
+            row["change_types"].append(label)
+
+    for key in deltas["new_options"]:
+        row = ensure_row(key)
+        label = "New contract option"
+        if label not in row["change_types"]:
+            row["change_types"].append(label)
+
+    for key in deltas["removed_options"]:
+        row = ensure_row(key)
+        label = "Removed contract option"
+        if label not in row["change_types"]:
+            row["change_types"].append(label)
+
+    ordered = sorted(
+        rows.values(),
+        key=lambda item: (
+            item["operator"],
+            item["property"],
+            item["room_name"],
+            item["contract_length"],
+            item["academic_year"],
+            item["floor_level"],
+        ),
+    )
+    return ordered
+
+
+def _build_html_table(rows: List[Dict[str, str]]) -> str:
+    if not rows:
+        return '<p style="margin:0; font-size:14px; color:#52606d;">No rate-related changes detected.</p>'
+
+    header_style = (
+        "padding:12px 14px; border:1px solid #d9e2ec; background-color:#eef2f7; "
+        "font-size:13px; font-weight:700; text-align:left; color:#243b53;"
+    )
+    cell_style = "padding:12px 14px; border:1px solid #d9e2ec; font-size:13px; color:#243b53; vertical-align:top;"
+
+    parts = [
+        '<table style="width:100%; border-collapse:collapse; margin:0 0 8px 0;">',
+        "<thead>",
+        "<tr>",
+    ]
+    for heading in [
+        "Operator",
+        "Property",
+        "Room Name",
+        "Floor Level",
+        "Contract Length",
+        "Academic Year",
+        "Weekly Price (previous)",
+        "Weekly Price (latest)",
+        "Change Type",
+        "Availability",
+    ]:
+        parts.append(f'<th style="{header_style}">{escape(heading)}</th>')
+    parts.extend(["</tr>", "</thead>", "<tbody>"])
+
+    for row in rows:
+        parts.append("<tr>")
+        parts.append(f'<td style="{cell_style}">{_html_text(row["operator"])}</td>')
+        parts.append(f'<td style="{cell_style}">{_html_text(row["property"])}</td>')
+        parts.append(f'<td style="{cell_style}">{row["room_name_html"]}</td>')
+        parts.append(f'<td style="{cell_style}">{_html_text(row["floor_level"])}</td>')
+        parts.append(f'<td style="{cell_style}">{_html_text(row["contract_length"])}</td>')
+        parts.append(f'<td style="{cell_style}">{_html_text(row["academic_year"])}</td>')
+        parts.append(f'<td style="{cell_style}">{_html_text(row["previous_price"])}</td>')
+        parts.append(f'<td style="{cell_style}">{_html_text(row["latest_price"])}</td>')
+        parts.append(f'<td style="{cell_style}">{_html_text("; ".join(row["change_types"]) or "—")}</td>')
+        parts.append(f'<td style="{cell_style}">{_html_text(row["availability"])}</td>')
+        parts.append("</tr>")
+
+    parts.extend(["</tbody>", "</table>"])
+    return "".join(parts)
+
+
+def _build_grouped_html_list(
+    items: List[Tuple[str, str]],
+    empty_text: str,
+) -> str:
+    if not items:
+        return (
+            '<ul style="margin:0 0 0 18px; padding:0; color:#243b53;">'
+            f'<li style="margin:0 0 8px 0;">{escape(empty_text)}</li>'
+            "</ul>"
+        )
+
+    parts: List[str] = []
+    grouped = _group_by_operator(items)
+    for operator in sorted(grouped):
+        parts.append(
+            '<div style="margin:0 0 14px 0;">'
+            f'<div style="font-size:14px; font-weight:700; color:#243b53; margin:0 0 6px 0;">{escape(operator)}</div>'
+            '<ul style="margin:0 0 0 18px; padding:0; color:#243b53;">'
+        )
+        for detail in grouped[operator]:
+            parts.append(f'<li style="margin:0 0 8px 0;">{detail}</li>')
+        parts.append("</ul></div>")
+    return "".join(parts)
+
+
+def _build_incentive_change_items(deltas: Dict[str, Any]) -> List[Tuple[str, str]]:
+    items: List[Tuple[str, str]] = []
+    for delta in sorted(deltas["incentive_changes"], key=lambda item: item.key):
+        op, prop, room, contract, ay, floor = delta.key
+        details = [
+            f"<strong>{escape(_norm_text(prop) or '—')}</strong>",
+            escape(_norm_text(room) or "—"),
+            escape(_norm_text(contract) or "—"),
+            escape(_norm_text(ay) or "—"),
+        ]
+        if _norm_text(floor):
+            details.append(escape(_norm_text(floor)))
+        details.append(
+            f"Offer change: {escape(_norm_text(delta.old.get('Incentives')) or 'blank')} "
+            f"&rarr; {escape(_norm_text(delta.new.get('Incentives')) or 'blank')}"
+        )
+        items.append((_norm_text(op), " | ".join(details)))
+    return items
+
+
+def _build_availability_change_items(deltas: Dict[str, Any]) -> List[Tuple[str, str]]:
+    items: List[Tuple[str, str]] = []
+    for delta in sorted(deltas["availability_changes"], key=lambda item: item.key):
+        op, prop, room, contract, ay, floor = delta.key
+        details = [
+            f"<strong>{escape(_norm_text(prop) or '—')}</strong>",
+            escape(_norm_text(room) or "—"),
+            escape(_norm_text(contract) or "—"),
+            escape(_norm_text(ay) or "—"),
+        ]
+        if _norm_text(floor):
+            details.append(escape(_norm_text(floor)))
+        details.append(
+            f"Availability: {escape(_norm_text(delta.old.get('Availability')) or 'Unknown')} "
+            f"&rarr; {escape(_norm_text(delta.new.get('Availability')) or 'Unknown')}"
+        )
+        items.append((_norm_text(op), " | ".join(details)))
+    return items
+
+
+def _build_market_highlights_html(stats: SummaryStats) -> str:
+    scope_text = (
+        f"This run looks {stats.scope_label} across {stats.affected_properties} operator/property pair"
+        f"{'' if stats.affected_properties == 1 else 's'}."
+    )
+    bullets = [
+        f"Largest increase: {stats.biggest_increase if stats.biggest_increase != 'None' else 'No weekly price increases detected.'}",
+        f"Largest decrease: {stats.biggest_decrease if stats.biggest_decrease != 'None' else 'No weekly price decreases detected.'}",
+        f"Busiest operator: {stats.busiest_operator}",
+        f"Most active property: {stats.busiest_property}",
+        f"Biggest mover: {stats.biggest_mover}",
+        scope_text,
+    ]
+
+    parts = ['<ul style="margin:0 0 0 18px; padding:0; color:#243b53;">']
+    for bullet in bullets:
+        parts.append(f'<li style="margin:0 0 8px 0;">{escape(bullet)}</li>')
+    parts.append("</ul>")
+    return "".join(parts)
+
+
+def _generate_ai_market_overview(
+    latest_snapshot_id: str,
+    previous_snapshot_id: str,
+    deltas: Dict[str, Any],
+) -> str:
+    stats = _build_summary_stats(deltas)
+    if stats.total_changes <= 0:
         return ""
-    return _append_signature(body)
+
+    rate_direction = "mixed"
+    if stats.rate_change_count > 0:
+        if stats.rate_increase_count > 0 and stats.rate_decrease_count == 0:
+            rate_direction = "rising"
+        elif stats.rate_decrease_count > 0 and stats.rate_increase_count == 0:
+            rate_direction = "falling"
+
+    prompt = "\n".join(
+        [
+            "Write one short paragraph for an internal PBSA market-intelligence email about Southampton.",
+            "Use only the supplied facts. Do not invent causes, future expectations, or unsupported reasons.",
+            "Keep the tone human, polished, and professional.",
+            "Mention whether rates look broadly up, down, or mixed, whether incentives are changing, which operator or property was most active, and whether the activity looks isolated or broad-based.",
+            "Return plain text only. Do not use bullets, markdown, HTML, or a signature.",
+            "Keep it to 3 or 4 sentences.",
+            "",
+            f"Previous Snapshot ID: {previous_snapshot_id}",
+            f"Latest Snapshot ID: {latest_snapshot_id}",
+            f"Total detected changes: {stats.total_changes}",
+            f"Affected operator/property pairs: {stats.affected_properties}",
+            f"Rate direction from numeric changes: {rate_direction}",
+            f"Rate change count: {stats.rate_change_count}",
+            f"Rate increases: {stats.rate_increase_count}",
+            f"Rate decreases: {stats.rate_decrease_count}",
+            f"Contract value change count: {stats.contract_value_change_count}",
+            f"Incentive change count: {stats.incentive_change_count}",
+            f"Availability change count: {stats.availability_change_count}",
+            f"New contract option count: {stats.new_option_count}",
+            f"Removed contract option count: {stats.removed_option_count}",
+            f"Busiest operator: {stats.busiest_operator}",
+            f"Most active property: {stats.busiest_property}",
+            f"Biggest mover: {stats.biggest_mover}",
+            f"Scope label: {stats.scope_label}",
+            f"Biggest price increase: {stats.biggest_increase}",
+            f"Biggest price decrease: {stats.biggest_decrease}",
+            "",
+            "Rate change examples:",
+            *(stats.rate_change_lines[:10] or ["None"]),
+            "",
+            "Incentive change examples:",
+            *(stats.incentive_change_lines[:10] or ["None"]),
+            "",
+            "Availability change examples:",
+            *(stats.availability_change_lines[:10] or ["None"]),
+        ]
+    )
+
+    return _call_openai(prompt, max_output_tokens=220)
+
+
+def _generate_ai_email_body(
+    latest_snapshot_id: str,
+    previous_snapshot_id: str,
+    deltas: Dict[str, Any],
+    previous_map: Dict[Tuple[str, ...], Dict[str, Any]],
+    latest_map: Dict[Tuple[str, ...], Dict[str, Any]],
+) -> str:
+    overview = _generate_ai_market_overview(
+        latest_snapshot_id=latest_snapshot_id,
+        previous_snapshot_id=previous_snapshot_id,
+        deltas=deltas,
+    )
+    if not _norm_text(overview):
+        return ""
+
+    stats = _build_summary_stats(deltas)
+    rate_rows = _build_rate_change_table_rows(
+        deltas=deltas,
+        previous_map=previous_map,
+        latest_map=latest_map,
+    )
+    incentive_items = _build_incentive_change_items(deltas)
+    availability_items = _build_availability_change_items(deltas)
+
+    html_parts = [
+        "<html><body style=\"margin:0; padding:0; background-color:#f5f7fa;\">",
+        '<div style="padding:24px 12px; background-color:#f5f7fa;">',
+        '<div style="max-width:1080px; margin:0 auto; background-color:#ffffff; border:1px solid #d9e2ec; border-radius:10px; padding:32px; font-family:Arial, Helvetica, sans-serif; color:#243b53; line-height:1.6;">',
+        '<p style="margin:0 0 12px 0; font-size:16px;">Hi team,</p>',
+        '<p style="margin:0 0 18px 0; font-size:16px;">Please see below your PBSA Market Intelligence summary for Southampton.</p>',
+        (
+            '<p style="margin:0 0 20px 0; font-size:12px; color:#7b8794;">'
+            f"Previous snapshot ID: {escape(previous_snapshot_id)}<br>"
+            f"Latest snapshot ID: {escape(latest_snapshot_id)}"
+            "</p>"
+        ),
+        f'<p style="margin:0 0 26px 0; font-size:15px; color:#243b53;">{escape(_norm_text(overview))}</p>',
+        '<div style="margin:0 0 12px 0; font-size:18px; font-weight:700; color:#102a43;">Rate changes</div>',
+        '<p style="margin:0 0 14px 0; font-size:14px; color:#52606d;">The table below summarises the key pricing and contract-option movements captured between the two latest snapshots.</p>',
+        _build_html_table(rate_rows),
+        '<div style="margin:26px 0 12px 0; font-size:18px; font-weight:700; color:#102a43;">Incentive Changes</div>',
+        _build_grouped_html_list(incentive_items, "None detected."),
+        '<div style="margin:26px 0 12px 0; font-size:18px; font-weight:700; color:#102a43;">Availability Changes</div>',
+        _build_grouped_html_list(availability_items, "None detected."),
+        '<div style="margin:26px 0 12px 0; font-size:18px; font-weight:700; color:#102a43;">Market Highlights</div>',
+        _build_market_highlights_html(stats),
+    ]
+
+    return _append_html_signature("".join(html_parts)) + "</div></div></body></html>"
 
 
 def _build_email_body(
@@ -835,7 +1120,7 @@ def _build_email_body(
     return "\n".join(lines).strip() + "\n"
 
 
-def _send_email(subject: str, body: str) -> None:
+def _send_email(subject: str, body: str, subtype: str = "plain") -> None:
     username = os.getenv("SMTP_USERNAME", "").strip()
     password = os.getenv("SMTP_PASSWORD", "").strip()
     if not username or not password:
@@ -844,7 +1129,7 @@ def _send_email(subject: str, body: str) -> None:
     from_addr = _extract_email(username)
     to_addrs = [_extract_email(addr) for addr in EMAIL_TO]
 
-    msg = MIMEText(body, "plain", "utf-8")
+    msg = MIMEText(body, subtype, "utf-8")
     msg["Subject"] = subject
     msg["From"] = from_addr
     msg["To"] = ", ".join(to_addrs)
@@ -904,6 +1189,8 @@ def main() -> int:
         latest_snapshot_id=latest_snapshot,
         previous_snapshot_id=previous_snapshot,
         deltas=deltas,
+        previous_map=previous_map,
+        latest_map=latest_map,
     )
     body = ai_body or _build_email_body(
         latest_snapshot_id=latest_snapshot,
@@ -912,7 +1199,7 @@ def main() -> int:
         latest_df=latest_df,
     )
 
-    _send_email(subject, body)
+    _send_email(subject, body, subtype="html" if ai_body else "plain")
     print("Pricing change report email sent")
     print(f"Latest snapshot: {latest_snapshot}")
     print(f"Previous snapshot: {previous_snapshot}")
