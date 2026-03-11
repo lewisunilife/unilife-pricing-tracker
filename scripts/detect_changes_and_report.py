@@ -11,9 +11,8 @@ from typing import Any, Dict, Iterable, List, Tuple
 import pandas as pd
 
 
-SMTP_SERVER = "smtp.office365.com"
+SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-EMAIL_FROM = "[PBSA-Market-Intelligence-@lewis.co.uk](mailto:PBSA-Market-Intelligence-@lewis.co.uk)"
 EMAIL_TO = ["[lewis@unilife.co.uk](mailto:lewis@unilife.co.uk)"]
 
 WORKBOOK_PATH = Path(__file__).resolve().parents[1] / "data" / "Unilife_Pricing_Snapshot.xlsx"
@@ -359,7 +358,7 @@ def _send_email(subject: str, body: str) -> None:
     if not username or not password:
         raise RuntimeError("SMTP_USERNAME and SMTP_PASSWORD secrets are required to send report email.")
 
-    from_addr = _extract_email(EMAIL_FROM)
+    from_addr = _extract_email(username)
     to_addrs = [_extract_email(addr) for addr in EMAIL_TO]
 
     msg = MIMEText(body, "plain", "utf-8")
