@@ -14,10 +14,6 @@ from urllib import request as urllib_request
 
 import pandas as pd
 
-
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-EMAIL_TO = ["[lewis@unilife.co.uk](mailto:lewis@unilife.co.uk)"]
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 OPENAI_SUMMARY_MODEL = "gpt-4.1"
 SIGNATURE_LINES = [
@@ -87,6 +83,19 @@ def _extract_email(raw: str) -> str:
     if match:
         return match.group(1).strip()
     return token
+
+
+def _parse_email_list(raw: str) -> List[str]:
+    parts = re.split(r"[,\n;]+", _norm_text(raw))
+    emails: List[str] = []
+    seen = set()
+    for part in parts:
+        email = _extract_email(part)
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        emails.append(email)
+    return emails
 
 
 def _snapshot_order(values: Iterable[Any]) -> List[str]:
@@ -1121,21 +1130,42 @@ def _build_email_body(
 
 
 def _send_email(subject: str, body: str, subtype: str = "plain") -> None:
+    host = os.getenv("SMTP_HOST", "").strip()
+    port_raw = os.getenv("SMTP_PORT", "").strip()
     username = os.getenv("SMTP_USERNAME", "").strip()
     password = os.getenv("SMTP_PASSWORD", "").strip()
-    if not username or not password:
-        raise RuntimeError("SMTP_USERNAME and SMTP_PASSWORD secrets are required to send report email.")
+    from_addr = _extract_email(os.getenv("SMTP_FROM", ""))
+    to_addrs = _parse_email_list(os.getenv("SMTP_TO", ""))
 
-    from_addr = _extract_email(username)
-    to_addrs = [_extract_email(addr) for addr in EMAIL_TO]
+    missing = [
+        name
+        for name, value in [
+            ("SMTP_HOST", host),
+            ("SMTP_PORT", port_raw),
+            ("SMTP_USERNAME", username),
+            ("SMTP_PASSWORD", password),
+            ("SMTP_FROM", from_addr),
+            ("SMTP_TO", ", ".join(to_addrs)),
+        ]
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(f"Missing SMTP configuration env vars: {', '.join(missing)}")
+
+    try:
+        port = int(port_raw)
+    except ValueError as exc:
+        raise RuntimeError("SMTP_PORT must be an integer.") from exc
 
     msg = MIMEText(body, subtype, "utf-8")
     msg["Subject"] = subject
     msg["From"] = from_addr
     msg["To"] = ", ".join(to_addrs)
 
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as smtp:
+    with smtplib.SMTP(host, port, timeout=30) as smtp:
+        smtp.ehlo()
         smtp.starttls()
+        smtp.ehlo()
         smtp.login(username, password)
         smtp.sendmail(from_addr, to_addrs, msg.as_string())
 

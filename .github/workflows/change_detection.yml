@@ -33,6 +33,10 @@ jobs:
 
       - name: Run change detection and send email if changes found
         env:
+          SMTP_HOST: smtp.office365.com
+          SMTP_PORT: "587"
+          SMTP_FROM: PBSA-Market-Intelligence@unilife.uk
+          SMTP_TO: lewis@unilife.co.uk
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
