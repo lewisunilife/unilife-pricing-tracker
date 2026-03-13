@@ -60,7 +60,7 @@ def _adapter_pair(
 
 ADAPTERS: Dict[str, ParserAdapter] = {
     "abodus": _adapter("abodus", abodus_parser.parse),
-    "canvas": _adapter("canvas", canvas_parser.parse),
+    "canvas": _adapter("canvas", canvas_parser.parse, skip_generic_api_detection=True),
     "capitol": _adapter("capitol", capitol_parser.parse, skip_generic_api_detection=True),
     "collegiate": _adapter("collegiate", collegiate_parser.parse),
     "crm": _adapter("crm", crm_parser.parse),
