@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from playwright.async_api import Page
 
 from . import common
+from scraper.core.normalisers import normalise_floor_level
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -38,6 +39,29 @@ MONTHS = {
     "oct": 10,
     "nov": 11,
     "dec": 12,
+}
+ORDINAL_FLOORS = {
+    0: "Ground floor",
+    1: "First",
+    2: "Second",
+    3: "Third",
+    4: "Fourth",
+    5: "Fifth",
+    6: "Sixth",
+    7: "Seventh",
+    8: "Eighth",
+    9: "Ninth",
+    10: "Tenth",
+    11: "Eleventh",
+    12: "Twelfth",
+    13: "Thirteenth",
+    14: "Fourteenth",
+    15: "Fifteenth",
+    16: "Sixteenth",
+    17: "Seventeenth",
+    18: "Eighteenth",
+    19: "Nineteenth",
+    20: "Twentieth",
 }
 
 
@@ -230,6 +254,25 @@ def _normalise_title_case(value: Any) -> str:
     return common.normalize_space(text)
 
 
+def _canvas_floor_level(value: Any) -> str:
+    text = common.normalize_space(value)
+    if not text:
+        return ""
+
+    normalised = normalise_floor_level(text)
+    if normalised:
+        return normalised
+
+    match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", text, re.IGNORECASE)
+    if not match:
+        return text
+
+    floor_number = int(match.group(1))
+    if floor_number in ORDINAL_FLOORS:
+        return ORDINAL_FLOORS[floor_number]
+    return text
+
+
 def _infer_room_type(room_label: str, category_label: str) -> str:
     category = _normalise_title_case(category_label)
     if category:
@@ -348,6 +391,58 @@ def _identity_room_name(room_label: str, unit_number: str, academic_year: str, c
     return f"{base} [{' | '.join(parts)}]" if parts else base
 
 
+def _normalise_feature_signature(value: Any) -> str:
+    text = common.normalize_space(value).replace("^", "|")
+    if not text:
+        return ""
+    tokens: List[str] = []
+    seen = set()
+    for part in re.split(r"[|,]+", text):
+        token = _normalise_title_case(part)
+        if not token:
+            continue
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        tokens.append(token)
+    return " | ".join(tokens)
+
+
+def _feature_display_token(signature: str) -> str:
+    if not signature:
+        return ""
+    tokens = [common.normalize_space(token) for token in signature.split("|") if common.normalize_space(token)]
+    return " / ".join(tokens)
+
+
+def _final_room_name(
+    room_label: str,
+    academic_year: str,
+    contract_length: str,
+    floor_level: str,
+    feature_token: str = "",
+) -> str:
+    label = room_label
+    if feature_token:
+        label = f"{label} | {feature_token}"
+
+    suffix_parts: List[str] = []
+    floor = _canvas_floor_level(floor_level)
+    if floor:
+        suffix_parts.append(floor)
+    ay = common.normalise_academic_year(academic_year)
+    if ay:
+        suffix_parts.append(f"AY{ay.replace('/', '-')}")
+    weeks_match = re.match(r"(\d{1,3})\s+WEEK", common.normalize_space(contract_length), flags=re.IGNORECASE)
+    if weeks_match:
+        suffix_parts.append(f"T{weeks_match.group(1)}W")
+    elif common.normalize_space(contract_length):
+        suffix_parts.append(common.normalize_key(contract_length).upper())
+
+    return f"{label} [{' | '.join(suffix_parts)}]" if suffix_parts else label
+
+
 def _availability_url(
     template: str,
     property_id: str,
@@ -376,6 +471,142 @@ def _availability_url(
 
 def _term_debug_label(title: str, item_name: str) -> str:
     return common.normalize_space(" ".join(part for part in [title, item_name] if common.normalize_space(part)))
+
+
+def _dedupe_listing_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = {}
+    order: List[Tuple[Any, ...]] = []
+
+    for row in rows:
+        key = (
+            common.normalize_space(row.get("Property", "")),
+            common.normalize_space(row.get("Room Category", "")),
+            common.normalize_space(row.get("Room Type", "")),
+            common.normalise_academic_year(row.get("Academic Year", "")),
+            common.extract_contract_length(row.get("Contract Length", "")),
+            _canvas_floor_level(row.get("Floor Level", "")),
+            row.get("Price"),
+            common.normalize_space(row.get("Availability", "")),
+            common.normalize_space(row.get("__feature_signature", "")),
+        )
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(row)
+
+    deduped: List[Dict[str, Any]] = []
+    for key in order:
+        rows_in_group = grouped[key]
+        chosen = dict(rows_in_group[0])
+        chosen["Floor Level"] = _canvas_floor_level(chosen.get("Floor Level", ""))
+        chosen["Unit Number"] = ""
+        chosen["__group_count"] = len(rows_in_group)
+        deduped.append(chosen)
+
+    identity_groups: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = {}
+    for row in deduped:
+        identity_key = (
+            common.normalize_space(row.get("Property", "")),
+            common.normalize_space(row.get("Room Category", "")),
+            common.normalize_space(row.get("Room Type", "")),
+            common.normalise_academic_year(row.get("Academic Year", "")),
+            common.extract_contract_length(row.get("Contract Length", "")),
+            _canvas_floor_level(row.get("Floor Level", "")),
+        )
+        identity_groups.setdefault(identity_key, []).append(row)
+
+    for identity_rows in identity_groups.values():
+        ordered_rows = list(
+            enumerate(
+                sorted(
+                    identity_rows,
+                    key=lambda item: (
+                        item.get("Price") is None,
+                        item.get("Price") or 0,
+                        common.normalize_space(item.get("__feature_signature", "")),
+                        common.normalize_space(item.get("Source URL", "")),
+                    ),
+                ),
+                start=1,
+            )
+        )
+        for _, row in ordered_rows:
+            feature_token = ""
+            signature = common.normalize_space(row.get("__feature_signature", ""))
+            if len(identity_rows) > 1 and signature:
+                feature_token = _feature_display_token(signature)
+
+            row["Room Name"] = _final_room_name(
+                room_label=common.normalize_space(row.get("Room Category", "")) or common.normalize_space(row.get("Room Name", "")),
+                academic_year=row.get("Academic Year", ""),
+                contract_length=row.get("Contract Length", ""),
+                floor_level=row.get("Floor Level", ""),
+                feature_token=feature_token,
+            )
+
+        provisional_groups: Dict[str, List[Dict[str, Any]]] = {}
+        for row in identity_rows:
+            provisional_groups.setdefault(common.normalize_space(row.get("Room Name", "")), []).append(row)
+
+        for provisional_name, grouped_rows in provisional_groups.items():
+            if len(grouped_rows) <= 1:
+                continue
+            for index, row in enumerate(
+                sorted(
+                    grouped_rows,
+                    key=lambda item: (
+                        item.get("Price") is None,
+                        item.get("Price") or 0,
+                        common.normalize_space(item.get("__feature_signature", "")),
+                        common.normalize_space(item.get("Source URL", "")),
+                    ),
+                ),
+                start=1,
+            ):
+                signature = common.normalize_space(row.get("__feature_signature", ""))
+                feature_token = _feature_display_token(signature)
+                if feature_token:
+                    feature_token = f"{feature_token} / Variant {index}"
+                else:
+                    feature_token = f"Variant {index}"
+
+                row["Room Name"] = _final_room_name(
+                    room_label=common.normalize_space(row.get("Room Category", "")) or common.normalize_space(row.get("Room Name", "")),
+                    academic_year=row.get("Academic Year", ""),
+                    contract_length=row.get("Contract Length", ""),
+                    floor_level=row.get("Floor Level", ""),
+                    feature_token=feature_token,
+                )
+
+    deduped.sort(
+        key=lambda row: (
+            common.normalize_space(row.get("Property", "")),
+            common.normalize_space(row.get("Room Category", "")),
+            common.normalise_academic_year(row.get("Academic Year", "")),
+            common.extract_contract_length(row.get("Contract Length", "")),
+            _canvas_floor_level(row.get("Floor Level", "")),
+            row.get("Price") is None,
+            row.get("Price") or 0,
+            common.normalize_space(row.get("__feature_signature", "")),
+        )
+    )
+
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for row in deduped:
+        key = (
+            common.normalize_space(row.get("Property", "")),
+            common.normalize_space(row.get("Room Name", "")),
+            common.normalize_space(row.get("Contract Length", "")),
+            common.normalize_space(row.get("Academic Year", "")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        row.pop("__feature_signature", None)
+        row.pop("__group_count", None)
+        out.append(row)
+    return out
 
 
 def _build_rows(
@@ -480,7 +711,7 @@ def _build_rows(
                             row = {
                                 "Property": property_display_name,
                                 "Room Name": _identity_room_name(room_label, unit_number, academic_year, contract_length),
-                                "Floor Level": floor_value,
+                                "Floor Level": _canvas_floor_level(floor_value),
                                 "Contract Length": contract_length,
                                 "Academic Year": academic_year,
                                 "Price": weekly_price,
@@ -500,6 +731,7 @@ def _build_rows(
                                 "Room Type": room_type,
                                 "Room Category": room_label,
                                 "Unit Number": unit_number,
+                                "__feature_signature": _normalise_feature_signature(_deep_get(unit_space, "features", "value")),
                             }
                             rows.append(row)
                             unit_rows_emitted += 1
@@ -536,6 +768,7 @@ def _build_rows(
                             "Room Type": room_type,
                             "Room Category": room_label,
                             "Unit Number": "",
+                            "__feature_signature": "",
                         }
                     )
                     sold_out_fallback_rows += 1
@@ -549,27 +782,15 @@ def _build_rows(
             _log(f"lease_term_failed error={exc}")
             continue
 
-    deduped: List[Dict[str, Any]] = []
-    seen = set()
-    for row in rows:
-        key = (
-            common.normalize_space(row.get("Property", "")),
-            common.normalize_space(row.get("Room Name", "")),
-            common.normalize_space(row.get("Contract Length", "")),
-            common.normalize_space(row.get("Academic Year", "")),
-            common.normalize_space(row.get("Source URL", "")),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(row)
+    raw_rows_count = len(rows)
+    deduped = _dedupe_listing_rows(rows)
 
     room_categories_detected = list(dict.fromkeys(room_categories_detected))
     contract_lengths_detected = list(dict.fromkeys(contract_lengths_detected))
     lease_term_labels_detected = list(dict.fromkeys(lease_term_labels_detected))
     return deduped, {
         "reason": (
-            f"canvas rows={len(deduped)} lease_terms={len(terms)} floorplans={len(floorplans)} "
+            f"canvas raw_rows={raw_rows_count} final_rows={len(deduped)} lease_terms={len(terms)} floorplans={len(floorplans)} "
             f"room_categories={len(room_categories_detected)} unit_tables={unit_tables_opened} "
             f"sold_out_fallback_rows={sold_out_fallback_rows}"
         ),
@@ -578,6 +799,7 @@ def _build_rows(
         "contract_lengths": contract_lengths_detected,
         "property_name": property_display_name,
         "unit_tables_opened": unit_tables_opened,
+        "raw_rows_count": raw_rows_count,
     }
 
 
@@ -616,6 +838,7 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
     _log(f"lease_terms_detected labels={meta.get('lease_term_labels') or []}")
     _log(f"room_categories_detected count={len(meta.get('room_categories') or [])}")
     _log(f"unit_tables_opened count={meta.get('unit_tables_opened') or 0}")
+    _log(f"raw_rows_collected count={meta.get('raw_rows_count') or 0}")
     _log(f"rows_emitted count={len(rows)}")
 
     reason = meta.get("reason", "canvas_rows_missing")
