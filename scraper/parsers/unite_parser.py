@@ -13,17 +13,18 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 )
+LOG_PREFIX = "[UNITE]"
 JSONLD_RE = re.compile(
     r"<script[^>]*type=\"application/ld\+json\"[^>]*>(.*?)</script>",
     re.IGNORECASE | re.DOTALL,
 )
-ACADEMIC_YEAR_LABEL_RE = re.compile(r"\b20\d{2}\s*-\s*20\d{2}\b")
+ACADEMIC_YEAR_LABEL_RE = re.compile(r"\b20\d{2}\s*[-\u2013\u2014]\s*20\d{2}\b")
 BOOKING_URL_RE = re.compile(r'href="([^"]*?/booking/details[^"]+)"', re.IGNORECASE)
 TAG_RE = re.compile(r"<[^>]+>")
-CURRENCY_RE = re.compile(r"[£Ł]\s*(\d[\d,]*(?:\.\d{1,2})?)")
+CURRENCY_RE = re.compile("(?:\u00A3|\u0141)\\s*(\\d[\\d,]*(?:\\.\\d{1,2})?)")
 WEEKS_RE = re.compile(r"(\d{1,3})\s+WEEK", re.IGNORECASE)
-PROPERTY_ID_RE = re.compile(r'"propertyId":"([^"]+)"')
-CITY_CODE_RE = re.compile(r'"cityCode":"([^"]+)"')
+PROPERTY_ID_RE = re.compile(r'propertyId\\?":\\?"?([^",}]+)')
+CITY_CODE_RE = re.compile(r'cityCode\\?":\\?"?([^",}]+)')
 
 KNOWN_ROOM_TYPE_PREFIXES = [
     "WHEELCHAIR ACCESSIBLE STUDIO",
@@ -36,7 +37,11 @@ KNOWN_ROOM_TYPE_PREFIXES = [
 
 CLICK_TEXT_JS = """
 (text) => {
-  const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const normalize = (value) => (value || '')
+    .replace(/[\\u2013\\u2014]/g, '-')
+    .replace(/\\s+/g, ' ')
+    .trim()
+    .toLowerCase();
   const target = normalize(text);
   for (const element of Array.from(document.querySelectorAll('button, [role="tab"], a, label, div, span'))) {
     if (normalize(element.innerText) !== target) {
@@ -86,9 +91,43 @@ def _property_url(value: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
 
 
+def _log(message: str) -> None:
+    print(f"{LOG_PREFIX} {message}")
+
+
+def _request_headers(url: str, referer: str = "", accept: str = "") -> Dict[str, str]:
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept-Language": "en-GB,en;q=0.9",
+    }
+    if accept:
+        headers["Accept"] = accept
+    if referer:
+        headers["Referer"] = referer
+    parsed = urlparse(url)
+    if parsed.scheme and parsed.netloc:
+        headers["Origin"] = f"{parsed.scheme}://{parsed.netloc}"
+    return headers
+
+
 async def _fetch_text(page: Page, url: str, referer: str = "") -> str:
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=90000)
+        response = await page.request.get(
+            url,
+            headers=_request_headers(url, referer=referer),
+            timeout=30000,
+        )
+        if response.ok:
+            content_type = common.normalize_space((response.headers or {}).get("content-type", "")).lower()
+            if not content_type or "html" in content_type:
+                text = await response.text()
+                if common.normalize_space(text):
+                    return text
+    except Exception:
+        pass
+
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
         await page.wait_for_timeout(1200)
         return await page.content()
     except Exception:
@@ -162,6 +201,20 @@ def _extract_academic_year_labels(property_html: str) -> List[str]:
     return labels
 
 
+def _academic_years_from_room_urls(room_urls: List[str]) -> List[str]:
+    labels: List[str] = []
+    seen = set()
+    for room_url in room_urls:
+        for candidate in parse_qs(urlparse(room_url).query).get("academicYear", []):
+            label = common.normalize_space(unquote(candidate))
+            if not label or label in seen:
+                continue
+            seen.add(label)
+            labels.append(label)
+    labels.sort(key=lambda value: common.normalise_academic_year(value))
+    return labels
+
+
 def _split_offer_name(name: Any) -> Tuple[str, str]:
     upper = common.normalize_space(name).upper().replace("EN-SUITE", "ENSUITE")
     if not upper:
@@ -207,8 +260,8 @@ def _extract_room_combinations(property_html: str) -> List[Tuple[str, str]]:
 def _extract_property_context(property_html: str) -> Tuple[str, str]:
     property_id_match = PROPERTY_ID_RE.search(property_html)
     city_code_match = CITY_CODE_RE.search(property_html)
-    property_id = common.normalize_space(property_id_match.group(1) if property_id_match else "")
-    city_code = common.normalize_space(city_code_match.group(1) if city_code_match else "")
+    property_id = common.normalize_space(property_id_match.group(1) if property_id_match else "").strip("\\")
+    city_code = common.normalize_space(city_code_match.group(1) if city_code_match else "").strip("\\")
     return property_id, city_code
 
 
@@ -232,21 +285,19 @@ async def _fetch_room_combinations_from_api(
         try:
             response = await page.request.get(
                 api_url,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept": "application/json",
-                    "Accept-Language": "en-GB,en;q=0.9",
-                    "Referer": property_url,
-                },
-                timeout=90000,
+                headers=_request_headers(api_url, referer=property_url, accept="application/json"),
+                timeout=30000,
             )
         except Exception:
+            _log(f"room_combinations_api_request_failed academic_year={academic_year_label}")
             continue
         if not response.ok:
+            _log(f"room_combinations_api_http academic_year={academic_year_label} status={response.status}")
             continue
         try:
             payload = await response.json()
         except Exception:
+            _log(f"room_combinations_api_invalid_json academic_year={academic_year_label}")
             continue
 
         for group in (payload or {}).get("data", []) or []:
@@ -259,11 +310,14 @@ async def _fetch_room_combinations_from_api(
                 room_category_raw = common.normalize_space(room_classification.get("classification"))
                 if not room_type_raw or not room_category_raw:
                     continue
-                key = (room_type_raw.upper().replace("EN-SUITE", "ENSUITE"), room_category_raw.upper())
+                key = (
+                    room_type_raw.upper().replace("EN-SUITE", "ENSUITE"),
+                    room_category_raw.upper(),
+                )
                 if key in seen:
                     continue
                 seen.add(key)
-                combinations.append(key)
+                combinations.append((room_type_raw, room_category_raw))
     return combinations
 
 
@@ -281,7 +335,7 @@ async def _dismiss_cookie_banner(page: Page) -> None:
 
 async def _collect_visible_room_urls(page: Page, property_url: str, academic_year_labels: List[str]) -> List[str]:
     try:
-        await page.goto(property_url, wait_until="domcontentloaded", timeout=90000)
+        await page.goto(property_url, wait_until="domcontentloaded", timeout=45000)
         await page.wait_for_timeout(2500)
         await _dismiss_cookie_banner(page)
     except Exception:
@@ -439,6 +493,7 @@ async def _row_from_booking_url(
 ) -> Optional[Dict[str, Any]]:
     booking_html = await _fetch_text(page, booking_url, referer=room_url)
     if not booking_html:
+        _log(f"booking_page_failed {booking_url}")
         return None
 
     query = parse_qs(urlparse(booking_url).query)
@@ -452,8 +507,10 @@ async def _row_from_booking_url(
         contract_value = _calculate_contract_value(weekly_price, contract_length)
 
     if not room_type and not room_category:
+        _log(f"booking_page_missing_room_fields {booking_url}")
         return None
     if not academic_year or not contract_length or weekly_price is None:
+        _log(f"booking_page_incomplete {booking_url}")
         return None
 
     base_room_name = " | ".join(part for part in [room_type, room_category] if part)
@@ -478,21 +535,42 @@ async def _row_from_booking_url(
     }
 
 
-async def _rows_for_room_url(page: Page, property_name: str, property_url: str, room_url: str) -> List[Dict[str, Any]]:
+async def _rows_for_room_url(
+    page: Page,
+    property_name: str,
+    property_url: str,
+    room_url: str,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    stats = {
+        "room_failed": 0,
+        "booking_urls": 0,
+        "booking_failed": 0,
+    }
+    _log(f"room_page_open {room_url}")
     room_html = await _fetch_text(page, room_url, referer=property_url)
-    if not room_html or "How long do you need your room for?" not in room_html:
-        return []
+    if not room_html:
+        _log(f"room_page_failed {room_url}")
+        stats["room_failed"] = 1
+        return [], stats
 
     booking_urls = _extract_booking_urls(room_html, room_url)
+    stats["booking_urls"] = len(booking_urls)
+    _log(f"booking_urls_found count={len(booking_urls)} room_url={room_url}")
     if not booking_urls:
-        return []
+        stats["room_failed"] = 1
+        return [], stats
 
     rows: List[Dict[str, Any]] = []
     for booking_url in booking_urls:
         row = await _row_from_booking_url(page, property_name, room_url, booking_url)
         if row:
             rows.append(row)
-    return rows
+        else:
+            stats["booking_failed"] += 1
+    _log(
+        f"room_page_rows count={len(rows)} booking_failures={stats['booking_failed']} room_url={room_url}"
+    )
+    return rows, stats
 
 
 async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], str]:
@@ -502,18 +580,27 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
         return [], "unite_property_url_missing"
 
     try:
-        await page.goto(property_url, wait_until="domcontentloaded", timeout=90000)
+        await page.goto(property_url, wait_until="domcontentloaded", timeout=45000)
         await page.wait_for_timeout(2500)
         await _dismiss_cookie_banner(page)
-        property_html = await page.locator("html").inner_html(timeout=30000)
+        property_html = await page.content()
     except Exception:
         property_html = ""
+    if not property_html:
+        property_html = await _fetch_text(page, property_url, referer=property_url)
     if not property_html:
         return [], "unite_property_page_unavailable"
 
     academic_year_labels = _extract_academic_year_labels(property_html)
     property_id, city_code = _extract_property_context(property_html)
+    _log(
+        f"property_discovered name={property_name or 'unknown'} url={property_url} "
+        f"property_id={property_id or '-'} city_code={city_code or '-'}"
+    )
+    _log(f"academic_years_discovered labels={academic_year_labels or []}")
+
     room_combinations: List[Tuple[str, str]] = []
+    room_combination_source = "none"
     if property_id and city_code and academic_year_labels:
         room_combinations = await _fetch_room_combinations_from_api(
             page,
@@ -522,13 +609,33 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
             city_code=city_code,
             academic_year_labels=academic_year_labels,
         )
+        if room_combinations:
+            room_combination_source = "api"
     if not room_combinations:
         room_combinations = _extract_room_combinations(property_html)
-    if not academic_year_labels or not room_combinations:
-        return [], "unite_property_data_missing"
+        if room_combinations:
+            room_combination_source = "jsonld"
+    _log(
+        f"room_combinations_discovered source={room_combination_source} count={len(room_combinations)}"
+    )
 
-    room_urls = _build_generated_room_urls(property_url, academic_year_labels, room_combinations)
-    room_urls.extend(await _collect_visible_room_urls(page, property_url, academic_year_labels))
+    visible_room_urls = await _collect_visible_room_urls(page, property_url, academic_year_labels)
+    if not academic_year_labels:
+        academic_year_labels = _academic_years_from_room_urls(visible_room_urls)
+        if academic_year_labels:
+            _log(f"academic_years_recovered_from_room_urls labels={academic_year_labels}")
+
+    if not academic_year_labels and not visible_room_urls:
+        return [], "unite_property_data_missing academic_years=0 visible_room_urls=0"
+    if not room_combinations and not visible_room_urls:
+        return [], "unite_property_data_missing room_combinations=0 visible_room_urls=0"
+
+    generated_room_urls = (
+        _build_generated_room_urls(property_url, academic_year_labels, room_combinations)
+        if academic_year_labels and room_combinations
+        else []
+    )
+    room_urls = generated_room_urls + visible_room_urls
 
     unique_room_urls: List[str] = []
     seen_urls = set()
@@ -538,16 +645,39 @@ async def parse(page: Page, src: Dict[str, str]) -> Tuple[List[Dict[str, Any]], 
             continue
         seen_urls.add(clean)
         unique_room_urls.append(clean)
+    _log(
+        f"room_pages_discovered generated={len(generated_room_urls)} "
+        f"visible={len(visible_room_urls)} unique={len(unique_room_urls)}"
+    )
 
     rows: List[Dict[str, Any]] = []
+    failed_room_pages = 0
+    booking_urls_found = 0
+    failed_booking_pages = 0
     for room_url in unique_room_urls:
-        rows.extend(await _rows_for_room_url(page, property_name, property_url, room_url))
+        room_rows, stats = await _rows_for_room_url(page, property_name, property_url, room_url)
+        failed_room_pages += stats["room_failed"]
+        booking_urls_found += stats["booking_urls"]
+        failed_booking_pages += stats["booking_failed"]
+        rows.extend(room_rows)
 
     if not rows:
-        return [], "unite_room_contracts_missing"
+        return [], (
+            f"unite_room_contracts_missing room_pages={len(unique_room_urls)} "
+            f"failed_room_pages={failed_room_pages} booking_urls={booking_urls_found}"
+        )
 
     _ensure_unique_room_names(rows)
     rows = _dedupe_rows(rows)
     for row in rows:
         row.pop("__base_room_name", None)
-    return rows, ""
+    _log(
+        f"rows_emitted count={len(rows)} failed_room_pages={failed_room_pages} "
+        f"failed_booking_pages={failed_booking_pages}"
+    )
+    return rows, (
+        f"unite rows={len(rows)} room_pages={len(unique_room_urls)} "
+        f"booking_urls={booking_urls_found} failed_room_pages={failed_room_pages} "
+        f"failed_booking_pages={failed_booking_pages} room_combinations={len(room_combinations)} "
+        f"source={room_combination_source}"
+    )

@@ -31,15 +31,31 @@ class ParserAdapter:
     name: str
     parse_dom: ParserFn
     parse_interactive: ParserFn
+    skip_generic_api_detection: bool = False
 
 
-def _adapter(name: str, fn: ParserFn) -> ParserAdapter:
+def _adapter(name: str, fn: ParserFn, skip_generic_api_detection: bool = False) -> ParserAdapter:
     # Existing operator parsers already use Playwright interactions internally.
-    return ParserAdapter(name=name, parse_dom=fn, parse_interactive=fn)
+    return ParserAdapter(
+        name=name,
+        parse_dom=fn,
+        parse_interactive=fn,
+        skip_generic_api_detection=skip_generic_api_detection,
+    )
 
 
-def _adapter_pair(name: str, dom_fn: ParserFn, interactive_fn: ParserFn) -> ParserAdapter:
-    return ParserAdapter(name=name, parse_dom=dom_fn, parse_interactive=interactive_fn)
+def _adapter_pair(
+    name: str,
+    dom_fn: ParserFn,
+    interactive_fn: ParserFn,
+    skip_generic_api_detection: bool = False,
+) -> ParserAdapter:
+    return ParserAdapter(
+        name=name,
+        parse_dom=dom_fn,
+        parse_interactive=interactive_fn,
+        skip_generic_api_detection=skip_generic_api_detection,
+    )
 
 
 ADAPTERS: Dict[str, ParserAdapter] = {
@@ -57,7 +73,7 @@ ADAPTERS: Dict[str, ParserAdapter] = {
     "prestige": _adapter("prestige", prestige_parser.parse),
     "student_roost": _adapter("student_roost", student_roost_parser.parse),
     "unilife": _adapter_pair("unilife", unilife_parser.parse_dom, unilife_parser.parse_interactive),
-    "unite": _adapter("unite", unite_parser.parse),
+    "unite": _adapter("unite", unite_parser.parse, skip_generic_api_detection=True),
     "vita": _adapter("vita", vita_parser.parse),
     "yugo": _adapter("yugo", yugo_parser.parse),
 }

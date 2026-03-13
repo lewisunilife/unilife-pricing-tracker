@@ -276,42 +276,50 @@ async def run_pipeline(city: Optional[str] = None, force_9am_gate: bool = True) 
                         continue
 
                     # Stage 2: API detection.
-                    print(f"[STAGE] {source.operator} | {source.property} | url={url} | stage=api")
-                    try:
-                        api_rows, api_reason = await _await_with_timeout(extract_api_rows(page), step_timeout)
-                    except asyncio.TimeoutError:
-                        source_timed_out = True
-                        source_reason = f"api stage timeout after {step_timeout:.1f}s"
-                        tracker.add(source, url, "api", "API", "timed_out", source_reason, 0)
-                        print(f"[TIMEOUT] {source.operator} | {source.property} | stage=api | url={url} | {source_reason}")
-                        page = await _replace_pipeline_page(
-                            context_browser,
-                            page,
-                            default_timeout_ms,
-                            default_navigation_timeout_ms,
+                    if getattr(adapter, "skip_generic_api_detection", False):
+                        print(
+                            f"[STAGE] {source.operator} | {source.property} | url={url} | "
+                            "stage=api | skipped=operator_specific_parser"
                         )
-                        continue
-
-                    if api_rows:
-                        tracker.add(source, url, "api", "API", "success", api_reason, len(api_rows))
-                        source_raw_count += len(api_rows)
-                        for row in api_rows:
-                            raw_records.append(
-                                {
-                                    "city": source.city,
-                                    "operator": source.operator,
-                                    "property": source.property,
-                                    "parser": source.parser,
-                                    "method": "API",
-                                    "url": url,
-                                    "payload": row,
-                                }
+                    else:
+                        print(f"[STAGE] {source.operator} | {source.property} | url={url} | stage=api")
+                        try:
+                            api_rows, api_reason = await _await_with_timeout(extract_api_rows(page), step_timeout)
+                        except asyncio.TimeoutError:
+                            source_timed_out = True
+                            source_reason = f"api stage timeout after {step_timeout:.1f}s"
+                            tracker.add(source, url, "api", "API", "timed_out", source_reason, 0)
+                            print(f"[TIMEOUT] {source.operator} | {source.property} | stage=api | url={url} | {source_reason}")
+                            page = await _replace_pipeline_page(
+                                context_browser,
+                                page,
+                                default_timeout_ms,
+                                default_navigation_timeout_ms,
                             )
-                            cleaned_row, _reason = build_candidate_row(source, url, row, context)
-                            property_rows.append(cleaned_row)
-                        print(f"[URL_DONE] {source.operator} | {source.property} | url={url} | stage=api | rows={len(api_rows)}")
-                        continue
-                    tracker.add(source, url, "api", "API", "failed", api_reason, 0)
+                            continue
+
+                        if api_rows:
+                            tracker.add(source, url, "api", "API", "success", api_reason, len(api_rows))
+                            source_raw_count += len(api_rows)
+                            for row in api_rows:
+                                raw_records.append(
+                                    {
+                                        "city": source.city,
+                                        "operator": source.operator,
+                                        "property": source.property,
+                                        "parser": source.parser,
+                                        "method": "API",
+                                        "url": url,
+                                        "payload": row,
+                                    }
+                                )
+                                cleaned_row, _reason = build_candidate_row(source, url, row, context)
+                                property_rows.append(cleaned_row)
+                            print(
+                                f"[URL_DONE] {source.operator} | {source.property} | url={url} | stage=api | rows={len(api_rows)}"
+                            )
+                            continue
+                        tracker.add(source, url, "api", "API", "failed", api_reason, 0)
 
                     # Stage 3: DOM parser.
                     print(f"[STAGE] {source.operator} | {source.property} | url={url} | stage=dom")
